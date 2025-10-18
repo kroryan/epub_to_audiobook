@@ -5,34 +5,36 @@ import warnings
 from pathlib import Path
 from subprocess import run
 import os
-import ssl
-import urllib3
-from urllib3.exceptions import InsecureRequestWarning
 
-# Configurar SSL y certificados para evitar errores de certificado
+# Importar y aplicar configuración SSL automática
 try:
-    # Crear contexto SSL más permisivo para entornos con problemas de certificados
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
+    from audiobook_generator.utils.ssl_config import ssl_manager, auto_configure_ssl
+    auto_configure_ssl()
+    logger = logging.getLogger(__name__)
+    logger.info("🔧 Sistema SSL automático activado para Coqui TTS")
+except ImportError as e:
+    logger = logging.getLogger(__name__)
+    logger.warning(f"Sistema SSL automático no disponible: {e}")
     
-    # Configurar urllib3 para usar contexto SSL personalizado
-    urllib3.disable_warnings(InsecureRequestWarning)
-    
-    # Variables de entorno para configurar SSL/TLS
-    os.environ['PYTHONHTTPSVERIFY'] = '0'
-    os.environ['CURL_CA_BUNDLE'] = ''
-    os.environ['REQUESTS_CA_BUNDLE'] = ''
-    
-    # Configurar variables para Hugging Face y TTS
-    os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
-    os.environ['HF_HUB_OFFLINE'] = '0'
-    os.environ['TRANSFORMERS_OFFLINE'] = '0'
-    
-    logger.info("🔧 Configuración SSL aplicada para evitar errores de certificado")
-    
-except Exception as e:
-    logger.warning(f"No se pudo configurar SSL completamente: {e}")
+    # Fallback: configuración SSL básica
+    try:
+        import ssl
+        import urllib3
+        from urllib3.exceptions import InsecureRequestWarning
+        
+        ssl._create_default_https_context = ssl._create_unverified_context
+        urllib3.disable_warnings(InsecureRequestWarning)
+        
+        os.environ.update({
+            'PYTHONHTTPSVERIFY': '0',
+            'CURL_CA_BUNDLE': '',
+            'REQUESTS_CA_BUNDLE': '',
+            'HF_HUB_DISABLE_TELEMETRY': '1'
+        })
+        
+        logger.info("🔧 Configuración SSL básica aplicada")
+    except Exception as fallback_error:
+        logger.warning(f"No se pudo configurar SSL: {fallback_error}")
 
 # Suprimir warnings específicos de XTTS sobre límite de caracteres
 warnings.filterwarnings('ignore', message='.*text length exceeds.*character limit.*')
@@ -40,10 +42,6 @@ warnings.filterwarnings('ignore', message='.*might cause truncated audio.*')
 # Suprimir warnings de torchaudio sobre cambios futuros
 warnings.filterwarnings('ignore', message='.*In 2.9, this function.*implementation will be changed.*')
 warnings.filterwarnings('ignore', category=UserWarning, module='torchaudio')
-# Suprimir warnings de SSL y certificados
-warnings.filterwarnings('ignore', category=urllib3.exceptions.InsecureRequestWarning)
-warnings.filterwarnings('ignore', message='.*SSL.*', category=UserWarning)
-warnings.filterwarnings('ignore', message='.*certificate.*', category=UserWarning)
 
 # Fix para PyTorch 2.6+ - weights_only=False por defecto
 import torch
@@ -64,18 +62,6 @@ os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 import requests
 from pydub import AudioSegment
 
-# Configurar requests para ignorar certificados SSL si hay problemas
-try:
-    from requests.adapters import HTTPAdapter
-    from urllib3.util.retry import Retry
-    import requests.packages.urllib3.util.ssl_
-    
-    # Monkey patch para deshabilitar verificación SSL en casos problemáticos
-    requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
-    
-except Exception:
-    pass
-
 from audiobook_generator.config.general_config import GeneralConfig
 from audiobook_generator.core.audio_tags import AudioTags
 from audiobook_generator.tts_providers.base_tts_provider import BaseTTSProvider
@@ -92,6 +78,8 @@ class CoquiTTSProvider(BaseTTSProvider):
     """
 
     def __init__(self, config: GeneralConfig):
+        # La configuración SSL ya se aplicó automáticamente al importar
+        
         # Force Coqui outputs to MP3 by default to match Piper and other providers.
         # If the environment misses FFmpeg/ffprobe, raise a clear error instead of
         # silently falling back to WAV so the user can fix their environment.
@@ -118,6 +106,106 @@ class CoquiTTSProvider(BaseTTSProvider):
 
     def validate_config(self):
         pass
+    
+    def _safe_load_tts_model(self, model_name, device):
+        """Carga modelo TTS con manejo robusto de errores SSL y certificados"""
+        from TTS.api import TTS
+        
+        strategies = [
+            # Estrategia 1: Carga normal (SSL ya configurado)
+            lambda: TTS(model_name).to(device),
+            
+            # Estrategia 2: Forzar descarga offline si el modelo ya existe
+            lambda: self._load_offline_first(model_name, device),
+            
+            # Estrategia 3: Con reconfiguración SSL forzada
+            lambda: self._load_with_ssl_reconfig(model_name, device),
+        ]
+        
+        last_error = None
+        for i, strategy in enumerate(strategies):
+            try:
+                logger.info(f"Intentando estrategia de carga {i+1}/3...")
+                result = strategy()
+                logger.info(f"✅ Estrategia {i+1} exitosa")
+                return result
+            except Exception as e:
+                last_error = e
+                logger.warning(f"Estrategia {i+1} falló: {e}")
+                
+                # Si es error SSL, reconfigurar y continuar
+                if ssl_manager.is_ssl_error(e):
+                    logger.info("🔧 Error SSL detectado, reconfigurando...")
+                    ssl_manager.setup_ssl_environment()
+                    continue
+        
+        # Si todas las estrategias fallan, lanzar el último error
+        raise last_error
+    
+    def _load_with_ssl_reconfig(self, model_name, device):
+        """Carga modelo con reconfiguración SSL forzada"""
+        from TTS.api import TTS
+        
+        # Reconfigurar SSL usando el sistema centralizado
+        ssl_manager.setup_ssl_environment()
+        
+        # Configurar variables adicionales temporalmente
+        temp_env = {
+            'PYTHONHTTPSVERIFY': '0',
+            'SSL_VERIFY': 'false',
+            'HF_HUB_OFFLINE': '0'
+        }
+        
+        original_env = {}
+        for key, value in temp_env.items():
+            original_env[key] = os.environ.get(key, '')
+            os.environ[key] = value
+        
+        try:
+            tts = TTS(model_name).to(device)
+            return tts
+        finally:
+            # Restaurar variables originales
+            for key, original_value in original_env.items():
+                if original_value:
+                    os.environ[key] = original_value
+                else:
+                    os.environ.pop(key, None)
+    
+    def _load_offline_first(self, model_name, device):
+        """Intenta cargar modelo desde cache local si existe"""
+        from TTS.api import TTS
+        import huggingface_hub
+        
+        try:
+            # Verificar si el modelo está en cache local
+            cache_dir = huggingface_hub.constants.HUGGINGFACE_HUB_CACHE
+            
+            # Si existe en cache, intentar carga offline
+            if os.path.exists(cache_dir):
+                # Configurar modo offline temporal
+                original_offline = os.environ.get('HF_HUB_OFFLINE', '0')
+                os.environ['HF_HUB_OFFLINE'] = '1'
+                
+                try:
+                    tts = TTS(model_name).to(device)
+                    logger.info("✅ Modelo cargado desde cache local (offline)")
+                    return tts
+                except Exception as offline_error:
+                    logger.debug(f"Carga offline falló: {offline_error}")
+                    # Restaurar modo online y continuar
+                    os.environ['HF_HUB_OFFLINE'] = original_offline
+                    raise offline_error
+                finally:
+                    os.environ['HF_HUB_OFFLINE'] = original_offline
+            else:
+                # No hay cache, usar carga normal con configuración SSL
+                return TTS(model_name).to(device)
+                
+        except Exception as e:
+            raise e
+    
+
 
     def _detect_language_from_model(self) -> str:
         """Detect language from the Coqui model name."""
@@ -194,47 +282,107 @@ class CoquiTTSProvider(BaseTTSProvider):
         self._text_to_speech_local(normalized_text, output_file, audio_tags)
 
     def _download_model(self, model_name: str, dest_dir: Path) -> Path:
-        """Download model files for a Coqui/TTS model.
+        """Download model files for a Coqui/TTS model with SSL error handling.
 
         This implementation expects a model archive available via a direct URL or a huggingface-like path.
         We'll support both a raw URL (if model_name starts with http) or a HF-style id.
         """
         dest_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Configurar requests session con SSL handling
+        session = self._create_secure_session()
+        
         # If the user passed a full URL, try to download that as a file
         if model_name.lower().startswith("http"):
             out_path = dest_dir / Path(model_name).name
             if not out_path.exists():
                 logger.info(f"Downloading Coqui model from {model_name} to {out_path}")
-                with requests.get(model_name, stream=True) as r:
-                    r.raise_for_status()
-                    with open(out_path, "wb") as f:
-                        for chunk in r.iter_content(chunk_size=8192):
-                            f.write(chunk)
+                try:
+                    with session.get(model_name, stream=True, timeout=30) as r:
+                        r.raise_for_status()
+                        with open(out_path, "wb") as f:
+                            for chunk in r.iter_content(chunk_size=8192):
+                                f.write(chunk)
+                except Exception as e:
+                    logger.error(f"Error downloading model from {model_name}: {e}")
+                    if ssl_manager.is_ssl_error(e):
+                        ssl_manager.provide_troubleshooting_info(e)
+                    raise
             return out_path
 
         # If not a direct URL, assume a huggingface-style repo id and try to download the TTS model .pth or config
         # We'll try a best-effort approach: construct download URLs for model.pth and config.json
         model_base = model_name
         possible_files = [f"{model_base}.pth", f"{model_base}.tar.gz", "config.json", "model.pt"]
+        successful_downloads = 0
+        
         for fname in possible_files:
             url = f"https://huggingface.co/{model_base}/resolve/main/{fname}"
             out_path = dest_dir / fname
             if out_path.exists():
                 logger.info(f"Model artifact {fname} already present, skipping download")
+                successful_downloads += 1
                 continue
+                
             try:
                 logger.info(f"Trying to download {url}")
-                with requests.get(url, stream=True) as r:
+                with session.get(url, stream=True, timeout=30) as r:
                     if r.status_code == 200:
                         with open(out_path, "wb") as f:
                             for chunk in r.iter_content(chunk_size=8192):
                                 f.write(chunk)
                         logger.info(f"Downloaded {fname} to {out_path}")
-            except Exception:
-                logger.debug(f"Could not download {url}")
+                        successful_downloads += 1
+                    else:
+                        logger.debug(f"File {fname} not found on server (status: {r.status_code})")
+            except Exception as e:
+                error_msg = str(e).lower()
+                if any(keyword in error_msg for keyword in ['ssl', 'certificate', 'handshake']):
+                    logger.warning(f"SSL error downloading {fname}: {e}")
+                    # No lanzar error inmediatamente, intentar otros archivos
+                else:
+                    logger.debug(f"Could not download {url}: {e}")
+
+        # Si no se descargó nada y había errores SSL, informar al usuario
+        if successful_downloads == 0:
+            logger.warning("No se pudieron descargar archivos del modelo. Esto puede indicar un problema de conectividad.")
+            logger.info("TTS intentará descargar automáticamente cuando sea necesario.")
 
         # Return the directory for TTS loader to search; the TTS python package often accepts model name or path
         return dest_dir
+    
+    def _create_secure_session(self):
+        """Crear session de requests con configuración SSL robusta"""
+        import requests
+        from requests.adapters import HTTPAdapter
+        from urllib3.util.retry import Retry
+        
+        session = requests.Session()
+        
+        # Configurar SSL
+        session.verify = False
+        
+        # Configurar retry strategy
+        retry_strategy = Retry(
+            total=3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            method_whitelist=["HEAD", "GET", "OPTIONS"],
+            backoff_factor=1
+        )
+        
+        adapter = HTTPAdapter(max_retries=retry_strategy)
+        session.mount("http://", adapter)
+        session.mount("https://", adapter)
+        
+        # Headers para evitar bloqueos
+        session.headers.update({
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': '*/*',
+            'Accept-Encoding': 'gzip, deflate',
+            'Connection': 'keep-alive',
+        })
+        
+        return session
 
     def _text_to_speech_local(self, text: str, output_file: str, audio_tags: AudioTags):
         # Handle different model types
@@ -285,10 +433,11 @@ class CoquiTTSProvider(BaseTTSProvider):
         
         logger.info(f"Using device: {device}")
 
-        # Initialize TTS model
+        # Initialize TTS model with SSL error handling
         logger.info(f"Initializing Coqui TTS model: {tts_model}")
         try:
-            tts = TTS(tts_model).to(device)
+            # Intentar cargar modelo con múltiples estrategias
+            tts = self._safe_load_tts_model(tts_model, device)
             logger.info(f"TTS model loaded successfully on {device}")
             
             # Log model capabilities (defensive checks)
@@ -311,12 +460,25 @@ class CoquiTTSProvider(BaseTTSProvider):
                 logger.debug("Could not determine multi-lingual capabilities for TTS model")
                 
         except Exception as e:
-            logger.error(f"Failed to initialize TTS model {tts_model}: {e}")
-            if "local:" in model_id:
-                logger.error("For local models, ensure the model files are correctly placed in the coqui_models directory")
+            # Usar el sistema SSL centralizado para detectar y manejar errores
+            if ssl_manager.is_ssl_error(e):
+                logger.error("❌ Error de certificado SSL detectado. Aplicando soluciones...")
+                try:
+                    # Re-aplicar configuración SSL y reintentar
+                    ssl_manager.setup_ssl_environment()
+                    tts = self._safe_load_tts_model(tts_model, device)
+                    logger.info("✅ Modelo cargado exitosamente después de corregir SSL")
+                except Exception as ssl_retry_error:
+                    logger.error(f"Error persistente después de corregir SSL: {ssl_retry_error}")
+                    ssl_manager.provide_troubleshooting_info(e)
+                    raise
             else:
-                logger.error("For hub models, check the model name format (should be like 'tts_models/language/dataset/model')")
-            raise
+                logger.error(f"Failed to initialize TTS model {tts_model}: {e}")
+                if "local:" in model_id:
+                    logger.error("For local models, ensure the model files are correctly placed in the coqui_models directory")
+                else:
+                    logger.error("For hub models, check the model name format (should be like 'tts_models/language/dataset/model')")
+                raise
 
         tmpdir_obj = None
         try:
