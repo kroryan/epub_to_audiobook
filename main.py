@@ -1,5 +1,14 @@
 import argparse
+import os
 from pathlib import Path
+
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    # dotenv not installed, skip loading .env file
+    pass
 
 from audiobook_generator.config.general_config import GeneralConfig
 from audiobook_generator.core.audiobook_generator import AudiobookGenerator
@@ -7,6 +16,7 @@ from audiobook_generator.tts_providers.base_tts_provider import (
     get_supported_tts_providers,
 )
 from audiobook_generator.utils.log_handler import setup_logging, generate_unique_log_path
+from audiobook_generator.utils.ffmpeg_setup import ensure_ffmpeg_available
 
 
 def handle_args():
@@ -203,6 +213,38 @@ def handle_args():
         help="Phoneme length, a.k.a. speaking rate",
     )
 
+    coqui_tts_group = parser.add_argument_group(title="coqui specific")
+    coqui_tts_group.add_argument(
+        "--coqui_path",
+        help="Path to the Coqui TTS models directory",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_model",
+        help="Coqui TTS model name (e.g., 'tts_models/es/css10/vits' for Spanish). Models are downloaded automatically. See https://github.com/coqui-ai/TTS for available models.",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_speaker",
+        help="Speaker ID for multi-speaker Coqui models",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_length_scale",
+        default=1.0,
+        type=float,
+        help="Length scale for speech speed (lower = faster, higher = slower)",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_noise_scale",
+        default=0.667,
+        type=float,
+        help="Noise scale for speech variability",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_noise_w_scale",
+        default=0.8,
+        type=float,
+        help="Noise scale for word duration variability",
+    )
+
     args = parser.parse_args()
     return GeneralConfig(args)
 
@@ -224,6 +266,9 @@ def main(config=None, log_file=None):
     config.log_file = effective_log_file
 
     setup_logging(config.log, str(effective_log_file))
+
+    # Ensure FFmpeg is available for audio conversion (pydub)
+    ensure_ffmpeg_available()
 
     AudiobookGenerator(config).run()
 

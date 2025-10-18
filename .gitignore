@@ -30,13 +30,6 @@ audiobook_output/
 
 private_examples/
 
-# custom
-scripts/
-*.onnx
-*.onnx.json
-
-# Models
-piper_models/*
 
 # Env files
 .env
@@ -45,3 +38,50 @@ piper_models/*
 test.py
 
 logs/
+
+# Build and distribution directories
+build/
+dist/
+
+# Large binary files and compiled executables
+third_party/ffmpeg/bin/*.exe
+
+# Piper TTS - Archivos pesados descargables (se reinstalan con scripts)
+piper_tts/
+!piper_tts/.gitkeep
+
+# Modelos de IA y archivos descargables
+*.onnx
+*.bin
+*.pt
+*.model
+*.pth
+models/
+
+# FFmpeg binaries (se descargan automáticamente)
+ffmpeg/
+ffmpeg.exe
+ffprobe.exe
+
+# All compiled files
+*.exe
+*.dll
+*.so
+*.dylib
+*.app
+*.dmg
+*.msi
+*.pkg
+*.deb
+*.rpm
+
+# Archivos de audio temporales y output
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.ogg
+temp_audio/
+output/
+audiobooks/
+

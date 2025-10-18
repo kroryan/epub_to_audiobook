@@ -30,7 +30,7 @@ def setup_logging(log_level, log_file=None, is_worker=False):
     # Ensure the directory for the log file exists
     Path(log_file).parent.mkdir(parents=True, exist_ok=True)
 
-    file_handler = logging.FileHandler(log_file)
+    file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
 

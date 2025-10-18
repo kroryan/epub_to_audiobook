@@ -10,3 +10,8 @@ gradio==5.33.1
 docker==7.1.0
 sentencex==0.6.1
 gradio_log==0.0.8
+pystray==0.19.5
+Pillow==10.4.0
+python-dotenv==1.0.0
+num2words==0.5.13
+TTS
