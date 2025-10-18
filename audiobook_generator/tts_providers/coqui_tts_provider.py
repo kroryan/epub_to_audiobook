@@ -80,6 +80,9 @@ class CoquiTTSProvider(BaseTTSProvider):
     def __init__(self, config: GeneralConfig):
         # La configuración SSL ya se aplicó automáticamente al importar
         
+        # Configurar aceptación automática de licencia Coqui para evitar prompts interactivos
+        self._setup_coqui_license()
+        
         # Force Coqui outputs to MP3 by default to match Piper and other providers.
         # If the environment misses FFmpeg/ffprobe, raise a clear error instead of
         # silently falling back to WAV so the user can fix their environment.
@@ -106,6 +109,65 @@ class CoquiTTSProvider(BaseTTSProvider):
 
     def validate_config(self):
         pass
+    
+    def _setup_coqui_license(self):
+        """Configurar aceptación automática de licencia Coqui para evitar prompts interactivos"""
+        try:
+            import os
+            from pathlib import Path
+            
+            # Variables de entorno para aceptar licencia automáticamente
+            os.environ['COQUI_TOS'] = 'AGREED'
+            os.environ['TTS_AGREE_LICENSE'] = 'yes' 
+            os.environ['COQUI_AGREE_LICENSE'] = '1'
+            
+            # Crear archivo de configuración TTS si no existe
+            try:
+                from TTS.utils.manage import ModelManager
+                tts_cache_path = Path.home() / ".cache" / "tts"
+                tts_cache_path.mkdir(parents=True, exist_ok=True)
+                
+                # Crear archivo de aceptación de licencia
+                license_file = tts_cache_path / ".tos_agreed"
+                license_file.touch(exist_ok=True)
+                
+                # También en el directorio de modelos si existe
+                models_dir = tts_cache_path / "tts_models--multilingual--multi-dataset--xtts_v2"
+                if models_dir.exists():
+                    license_file_model = models_dir / ".tos_agreed" 
+                    license_file_model.touch(exist_ok=True)
+                
+                logger.info("🤝 Configuración de licencia Coqui TTS establecida (uso no comercial)")
+                
+            except Exception as e:
+                logger.debug(f"Error creando archivos de licencia: {e}")
+            
+            # Monkey patch para el manager de TTS si es necesario
+            try:
+                import TTS.utils.manage
+                original_ask_tos = TTS.utils.manage.ModelManager.ask_tos
+                
+                def auto_accept_tos(self, output_path):
+                    """Auto-acepta términos de servicio para uso no comercial"""
+                    try:
+                        # Crear archivo .tos_agreed automáticamente
+                        tos_file = Path(output_path) / ".tos_agreed"
+                        tos_file.touch(exist_ok=True)
+                        logger.info("✅ Licencia Coqui aceptada automáticamente (uso no comercial)")
+                        return True
+                    except Exception as e:
+                        logger.warning(f"Error auto-aceptando licencia: {e}")
+                        return original_ask_tos(self, output_path)
+                
+                # Aplicar monkey patch
+                TTS.utils.manage.ModelManager.ask_tos = auto_accept_tos
+                logger.info("🔧 Monkey patch aplicado para aceptación automática de licencia")
+                
+            except Exception as e:
+                logger.debug(f"Error aplicando monkey patch: {e}")
+                
+        except Exception as e:
+            logger.warning(f"Error configurando licencia Coqui: {e}")
     
     def _safe_load_tts_model(self, model_name, device):
         """Carga modelo TTS con manejo robusto de errores SSL y certificados"""
@@ -362,13 +424,31 @@ class CoquiTTSProvider(BaseTTSProvider):
         # Configurar SSL
         session.verify = False
         
-        # Configurar retry strategy
-        retry_strategy = Retry(
-            total=3,
-            status_forcelist=[429, 500, 502, 503, 504],
-            method_whitelist=["HEAD", "GET", "OPTIONS"],
-            backoff_factor=1
-        )
+        # Configurar retry strategy (compatible con urllib3 1.x y 2.x)
+        try:
+            # Para urllib3 2.0+
+            retry_strategy = Retry(
+                total=3,
+                status_forcelist=[429, 500, 502, 503, 504],
+                allowed_methods=["HEAD", "GET", "OPTIONS"],
+                backoff_factor=1
+            )
+        except TypeError:
+            try:
+                # Para urllib3 1.x
+                retry_strategy = Retry(
+                    total=3,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                    method_whitelist=["HEAD", "GET", "OPTIONS"],
+                    backoff_factor=1
+                )
+            except TypeError:
+                # Fallback sin métodos específicos
+                retry_strategy = Retry(
+                    total=3,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                    backoff_factor=1
+                )
         
         adapter = HTTPAdapter(max_retries=retry_strategy)
         session.mount("http://", adapter)

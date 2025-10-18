@@ -37,7 +37,11 @@ class SSLConfigManager:
                 'HF_HUB_DISABLE_PROGRESS_BARS': '1',
                 'TRANSFORMERS_VERBOSITY': 'error',
                 'TF_CPP_MIN_LOG_LEVEL': '2',
-                'TOKENIZERS_PARALLELISM': 'false'
+                'TOKENIZERS_PARALLELISM': 'false',
+                # Variables para licencia Coqui automática
+                'COQUI_TOS': 'AGREED',
+                'TTS_AGREE_LICENSE': 'yes',
+                'COQUI_AGREE_LICENSE': '1'
             }
             
             for key, value in ssl_env_vars.items():
@@ -87,18 +91,37 @@ class SSLConfigManager:
             import requests
             from requests.adapters import HTTPAdapter
             from urllib3.util.retry import Retry
+            import urllib3
             
             # Crear session global con SSL deshabilitado
             session = requests.Session()
             session.verify = False
             
-            # Configurar retry strategy
-            retry_strategy = Retry(
-                total=3,
-                status_forcelist=[429, 500, 502, 503, 504],
-                method_whitelist=["HEAD", "GET", "OPTIONS"],
-                backoff_factor=1
-            )
+            # Configurar retry strategy (adaptado para nuevas versiones de urllib3)
+            try:
+                # Nuevo formato para urllib3 2.0+
+                retry_strategy = Retry(
+                    total=3,
+                    status_forcelist=[429, 500, 502, 503, 504],
+                    allowed_methods=["HEAD", "GET", "OPTIONS"],  # Nuevo parámetro
+                    backoff_factor=1
+                )
+            except TypeError:
+                try:
+                    # Formato anterior para urllib3 1.x
+                    retry_strategy = Retry(
+                        total=3,
+                        status_forcelist=[429, 500, 502, 503, 504],
+                        method_whitelist=["HEAD", "GET", "OPTIONS"],  # Formato anterior
+                        backoff_factor=1
+                    )
+                except TypeError:
+                    # Fallback sin métodos específicos
+                    retry_strategy = Retry(
+                        total=3,
+                        status_forcelist=[429, 500, 502, 503, 504],
+                        backoff_factor=1
+                    )
             
             adapter = HTTPAdapter(max_retries=retry_strategy)
             session.mount("http://", adapter)
@@ -112,6 +135,8 @@ class SSLConfigManager:
         except ImportError:
             # requests no disponible
             pass
+        except Exception as e:
+            logger.debug(f"Error configurando requests: {e}")
     
     def restore_ssl_context(self):
         """Restaurar configuración SSL original"""
