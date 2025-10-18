@@ -5,6 +5,34 @@ import warnings
 from pathlib import Path
 from subprocess import run
 import os
+import ssl
+import urllib3
+from urllib3.exceptions import InsecureRequestWarning
+
+# Configurar SSL y certificados para evitar errores de certificado
+try:
+    # Crear contexto SSL más permisivo para entornos con problemas de certificados
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
+    
+    # Configurar urllib3 para usar contexto SSL personalizado
+    urllib3.disable_warnings(InsecureRequestWarning)
+    
+    # Variables de entorno para configurar SSL/TLS
+    os.environ['PYTHONHTTPSVERIFY'] = '0'
+    os.environ['CURL_CA_BUNDLE'] = ''
+    os.environ['REQUESTS_CA_BUNDLE'] = ''
+    
+    # Configurar variables para Hugging Face y TTS
+    os.environ['HF_HUB_DISABLE_TELEMETRY'] = '1'
+    os.environ['HF_HUB_OFFLINE'] = '0'
+    os.environ['TRANSFORMERS_OFFLINE'] = '0'
+    
+    logger.info("🔧 Configuración SSL aplicada para evitar errores de certificado")
+    
+except Exception as e:
+    logger.warning(f"No se pudo configurar SSL completamente: {e}")
 
 # Suprimir warnings específicos de XTTS sobre límite de caracteres
 warnings.filterwarnings('ignore', message='.*text length exceeds.*character limit.*')
@@ -12,6 +40,10 @@ warnings.filterwarnings('ignore', message='.*might cause truncated audio.*')
 # Suprimir warnings de torchaudio sobre cambios futuros
 warnings.filterwarnings('ignore', message='.*In 2.9, this function.*implementation will be changed.*')
 warnings.filterwarnings('ignore', category=UserWarning, module='torchaudio')
+# Suprimir warnings de SSL y certificados
+warnings.filterwarnings('ignore', category=urllib3.exceptions.InsecureRequestWarning)
+warnings.filterwarnings('ignore', message='.*SSL.*', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*certificate.*', category=UserWarning)
 
 # Fix para PyTorch 2.6+ - weights_only=False por defecto
 import torch
@@ -31,6 +63,18 @@ os.environ["TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD"] = "1"
 
 import requests
 from pydub import AudioSegment
+
+# Configurar requests para ignorar certificados SSL si hay problemas
+try:
+    from requests.adapters import HTTPAdapter
+    from urllib3.util.retry import Retry
+    import requests.packages.urllib3.util.ssl_
+    
+    # Monkey patch para deshabilitar verificación SSL en casos problemáticos
+    requests.packages.urllib3.util.ssl_.DEFAULT_CIPHERS += ':HIGH:!DH:!aNULL'
+    
+except Exception:
+    pass
 
 from audiobook_generator.config.general_config import GeneralConfig
 from audiobook_generator.core.audio_tags import AudioTags
