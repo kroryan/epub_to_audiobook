@@ -282,47 +282,68 @@ class CoquiTTSProvider(BaseTTSProvider):
             return "es"
         
         # Extract language from model path like "tts_models/es/css10/vits"
-        if "/es/" in model_name or model_name.startswith("es") or "spanish" in model_name or "css10" in model_name or "mai" in model_name:
+        # Check for explicit language paths first (most reliable)
+        if "/es/" in model_name:
             return "es"
-        elif "/en/" in model_name or model_name.startswith("en"):
+        elif "/en/" in model_name:
             return "en"
-        elif "/fr/" in model_name or model_name.startswith("fr"):
+        elif "/fr/" in model_name:
             return "fr"
-        elif "/de/" in model_name or model_name.startswith("de"):
+        elif "/de/" in model_name:
             return "de"
-        elif "/it/" in model_name or model_name.startswith("it"):
+        elif "/it/" in model_name:
             return "it"
-        elif "/pt/" in model_name or model_name.startswith("pt"):
+        elif "/pt/" in model_name:
             return "pt"
-        elif "/ru/" in model_name or model_name.startswith("ru"):
+        elif "/ru/" in model_name:
             return "ru"
-        elif "/ja/" in model_name or model_name.startswith("ja"):
+        elif "/ja/" in model_name:
             return "ja"
-        elif "/zh-cn/" in model_name or model_name.startswith("zh"):
+        elif "/zh-cn/" in model_name or "/zh/" in model_name:
             return "zh-cn"
-        elif "/ko/" in model_name or model_name.startswith("ko"):
+        elif "/ko/" in model_name:
             return "ko"
+        elif "/nl/" in model_name:
+            return "nl"
+        elif "/pl/" in model_name:
+            return "pl"
+        elif "/tr/" in model_name:
+            return "tr"
+        elif "/hu/" in model_name:
+            return "hu"
+        elif "/ar/" in model_name:
+            return "ar"
+        
+        # Fallback: check if model name starts with language code
+        elif model_name.startswith("es") or "spanish" in model_name:
+            return "es"
+        elif model_name.startswith("en") or "english" in model_name:
+            return "en"
+        elif model_name.startswith("fr") or "french" in model_name:
+            return "fr"
+        elif model_name.startswith("de") or "german" in model_name:
+            return "de"
         
         # If we can't detect, default to Spanish for our Spanish-focused application
         logger.info(f"Could not detect language from model '{self.config.coqui_model}', defaulting to Spanish")
         return "es"
 
     def _normalize_text_if_needed(self, text: str) -> str:
-        """Apply text normalization if the model is Spanish."""
+        """Apply text normalization based on detected model language."""
         try:
             # Detect language from model
             language = self._detect_language_from_model()
             
-            # Only normalize for Spanish models
-            if language.startswith('es'):
-                from audiobook_generator.utils.text_normalizer import normalize_text_for_tts, is_normalization_needed
-                
-                # Check if normalization is needed to avoid unnecessary processing
-                if is_normalization_needed(text, language):
-                    normalized = normalize_text_for_tts(text, language)
-                    if normalized != text:
-                        logger.info(f"Applied Spanish text normalization to chunk of {len(text)} characters")
-                    return normalized
+            from audiobook_generator.utils.text_normalizer import normalize_text_for_tts, is_normalization_needed
+            
+            # Check if normalization is needed to avoid unnecessary processing
+            if is_normalization_needed(text, language):
+                normalized = normalize_text_for_tts(text, language)
+                if normalized != text:
+                    logger.info(f"Applied {language.upper()} text normalization to chunk of {len(text)} characters")
+                return normalized
+            else:
+                logger.debug(f"No normalization needed for {language.upper()} text of {len(text)} characters")
             
             return text
             

@@ -43,17 +43,44 @@ SPANISH_ORDINALS = {
 }
 
 
-def _convert_number_to_spanish(num: int) -> str:
-    """Convert integer to Spanish text using num2words with fallback."""
+def _convert_number_to_language(num: int, lang: str = 'es') -> str:
+    """Convert integer to text in specified language using num2words with fallback."""
     try:
         from num2words import num2words
-        return num2words(num, lang='es')
+        # Map language variants to base languages supported by num2words
+        lang_mapping = {
+            'es-ES': 'es', 'es-MX': 'es', 'es-AR': 'es',
+            'en-US': 'en', 'en-GB': 'en', 'en-CA': 'en',
+            'pt-BR': 'pt', 'pt-PT': 'pt',
+            'zh-cn': 'zh', 'zh-CN': 'zh'
+        }
+        
+        # Use mapped language or original
+        target_lang = lang_mapping.get(lang, lang)
+        
+        return num2words(num, lang=target_lang)
     except ImportError:
         logger.warning("num2words not available, using basic number conversion")
-        return _basic_number_to_spanish(num)
+        return _basic_number_conversion(num, lang)
     except Exception as e:
-        logger.warning(f"Error converting number {num}: {e}, using fallback")
+        logger.warning(f"Error converting number {num} to {lang}: {e}, using fallback")
+        return _basic_number_conversion(num, lang)
+
+
+def _convert_number_to_spanish(num: int) -> str:
+    """Convert integer to Spanish text using num2words with fallback."""
+    return _convert_number_to_language(num, 'es')
+
+
+def _basic_number_conversion(num: int, lang: str = 'es') -> str:
+    """Basic number conversion with language support (fallback when num2words is not available)."""
+    if lang == 'es':
         return _basic_number_to_spanish(num)
+    elif lang == 'en':
+        return _basic_number_to_english(num)
+    else:
+        # For unsupported languages, just return the number as string
+        return str(num)
 
 
 def _basic_number_to_spanish(num: int) -> str:
@@ -109,7 +136,54 @@ def _basic_number_to_spanish(num: int) -> str:
         return str(num)  # Fallback to digits for very large numbers
 
 
-def _normalize_numbers(text: str) -> str:
+def _basic_number_to_english(num: int) -> str:
+    """Basic number conversion for English (fallback when num2words is not available)."""
+    if num == 0:
+        return "zero"
+    
+    ones = ["", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"]
+    teens = ["ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"]
+    tens = ["", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"]
+    
+    if num < 0:
+        return f"negative {_basic_number_to_english(-num)}"
+    
+    if num < 10:
+        return ones[num]
+    elif num < 20:
+        return teens[num - 10]
+    elif num < 100:
+        tens_digit = num // 10
+        ones_digit = num % 10
+        if ones_digit == 0:
+            return tens[tens_digit]
+        else:
+            return f"{tens[tens_digit]}-{ones[ones_digit]}"
+    elif num == 100:
+        return "one hundred"
+    elif num < 1000:
+        hundreds_digit = num // 100
+        remainder = num % 100
+        if remainder == 0:
+            return f"{ones[hundreds_digit]} hundred"
+        else:
+            return f"{ones[hundreds_digit]} hundred {_basic_number_to_english(remainder)}"
+    elif num == 1000:
+        return "one thousand"
+    elif num < 1000000:
+        thousands = num // 1000
+        remainder = num % 1000
+        thousands_text = "one thousand" if thousands == 1 else f"{_basic_number_to_english(thousands)} thousand"
+        if remainder == 0:
+            return thousands_text
+        else:
+            return f"{thousands_text} {_basic_number_to_english(remainder)}"
+    else:
+        # For larger numbers, use a simplified approach
+        return str(num)  # Fallback to digits for very large numbers
+
+
+def _normalize_numbers(text: str, language: str = 'es') -> str:
     """Normalize standalone numbers in text."""
     # Pattern for standalone numbers (not part of dates, times, currencies, etc.)
     # Use negative lookahead and lookbehind to avoid numbers in dates, times, and currencies
@@ -122,15 +196,19 @@ def _normalize_numbers(text: str) -> str:
             # Skip very large numbers to avoid performance issues
             if num > 999999:
                 return num_str
-            return _convert_number_to_spanish(num)
+            return _convert_number_to_language(num, language)
         except ValueError:
             return num_str
     
     return re.sub(number_pattern, replace_number, text)
 
 
-def _normalize_dates(text: str) -> str:
+def _normalize_dates(text: str, language: str = 'es') -> str:
     """Normalize dates in DD/MM/YYYY, DD-MM-YYYY, and DD.MM.YYYY formats."""
+    # Only apply date normalization for supported languages
+    if language not in ['es', 'en']:
+        return text
+        
     # Pattern for dates: DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
     date_patterns = [
         r'\b(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})\b',  # DD/MM/YYYY
@@ -155,12 +233,29 @@ def _normalize_dates(text: str) -> str:
             if day < 1 or day > 31:
                 return match.group(0)  # Return original if invalid
             
-            # Convert day to ordinal if it's 1
-            day_text = "primero" if day == 1 else _convert_number_to_spanish(day)
-            month_text = SPANISH_MONTHS[month]
-            year_text = _convert_number_to_spanish(year)
+            if language == 'es':
+                # Spanish date formatting
+                day_text = "primero" if day == 1 else _convert_number_to_language(day, language)
+                month_text = SPANISH_MONTHS[month]
+                year_text = _convert_number_to_language(year, language)
+                return f"{day_text} de {month_text} de {year_text}"
+            elif language == 'en':
+                # English date formatting
+                english_months = {
+                    1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
+                    7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"
+                }
+                ordinals = {
+                    1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 
+                    21: "twenty-first", 22: "twenty-second", 23: "twenty-third", 31: "thirty-first"
+                }
+                day_text = ordinals.get(day, f"{_convert_number_to_language(day, language)}")
+                if day_text == _convert_number_to_language(day, language) and not day_text.endswith('th'):
+                    day_text += "th"
+                month_text = english_months[month]
+                year_text = _convert_number_to_language(year, language)
+                return f"{month_text} {day_text}, {year_text}"
             
-            return f"{day_text} de {month_text} de {year_text}"
         except (ValueError, KeyError):
             return match.group(0)  # Return original on error
     
@@ -171,7 +266,7 @@ def _normalize_dates(text: str) -> str:
     return result
 
 
-def _normalize_times(text: str) -> str:
+def _normalize_times(text: str, language: str = 'es') -> str:
     """Normalize time expressions like 3:30, 15:45, etc."""
     # Pattern for time: HH:MM (with optional AM/PM)
     time_pattern = r'\b(\d{1,2}):(\d{2})(?:\s*(AM|PM|am|pm))?\b'
@@ -191,19 +286,19 @@ def _normalize_times(text: str) -> str:
                 # 12-hour format
                 if am_pm.upper() == 'AM':
                     if hours == 12:
-                        hours_text = "doce"
+                        hours_text = "doce" if language == 'es' else "twelve"
                     else:
-                        hours_text = _convert_number_to_spanish(hours)
-                    period = "de la mañana"
+                        hours_text = _convert_number_to_language(hours, language)
+                    period = "de la mañana" if language == 'es' else "AM"
                 else:  # PM
                     if hours == 12:
-                        hours_text = "doce"
+                        hours_text = "doce" if language == 'es' else "twelve"
                     else:
-                        hours_text = _convert_number_to_spanish(hours)
-                    period = "de la tarde" if hours < 6 else "de la noche"
+                        hours_text = _convert_number_to_language(hours, language)
+                    period = "de la tarde" if language == 'es' else "PM"
             else:
                 # 24-hour format OR ambiguous time - infer from context and hour
-                hours_text = _convert_number_to_spanish(hours)
+                hours_text = _convert_number_to_language(hours, language)
                 
                 # If hours are 1-11 without AM/PM, assume afternoon/evening context for times like "las 3:30"
                 if hours >= 1 and hours <= 11:
@@ -234,10 +329,10 @@ def _normalize_times(text: str) -> str:
                 return f"{hours_text} y media {period}"
             elif minutes == 45:
                 next_hour = (hours + 1) % 24
-                next_hour_text = _convert_number_to_spanish(next_hour)
+                next_hour_text = _convert_number_to_language(next_hour, language)
                 return f"cuarto para las {next_hour_text} {period}"
             else:
-                minutes_text = _convert_number_to_spanish(minutes)
+                minutes_text = _convert_number_to_language(minutes, language)
                 return f"{hours_text} y {minutes_text} {period}"
                 
         except ValueError:
@@ -246,7 +341,7 @@ def _normalize_times(text: str) -> str:
     return re.sub(time_pattern, replace_time, text)
 
 
-def _normalize_currencies(text: str) -> str:
+def _normalize_currencies(text: str, language: str = 'es') -> str:
     """Normalize currency expressions like $150, €20, £30, etc."""
     # Patterns for different currencies
     currency_patterns = [
@@ -264,7 +359,7 @@ def _normalize_currencies(text: str) -> str:
             main_amount = int(match.group(1))
             sub_amount = int(match.group(2)) if match.lastindex >= 2 and match.group(2) else None
             
-            main_text = _convert_number_to_spanish(main_amount)
+            main_text = _convert_number_to_language(main_amount, language)
             
             # Handle singular/plural for main unit
             if main_amount == 1:
@@ -286,7 +381,7 @@ def _normalize_currencies(text: str) -> str:
             
             # Add sub-amount if present
             if sub_amount is not None and sub_amount > 0:
-                sub_text = _convert_number_to_spanish(sub_amount)
+                sub_text = _convert_number_to_language(sub_amount, language)
                 if sub_amount == 1:
                     sub_unit_text = sub_unit[:-1] if sub_unit.endswith('s') else sub_unit
                 else:
@@ -304,7 +399,7 @@ def _normalize_currencies(text: str) -> str:
     return result
 
 
-def _normalize_percentages(text: str) -> str:
+def _normalize_percentages(text: str, language: str = 'es') -> str:
     """Normalize percentage expressions like 15%, 3.5%, etc."""
     # Pattern for percentages
     percentage_pattern = r'\b(\d+(?:\.\d+)?)\s*%'
@@ -319,14 +414,14 @@ def _normalize_percentages(text: str) -> str:
                 whole = int(parts[0])
                 decimal = int(parts[1])
                 
-                whole_text = _convert_number_to_spanish(whole)
-                decimal_text = _convert_number_to_spanish(decimal)
+                whole_text = _convert_number_to_language(whole, language)
+                decimal_text = _convert_number_to_language(decimal, language)
                 
                 return f"{whole_text} coma {decimal_text} por ciento"
             else:
                 # Handle whole number percentages
                 percentage = int(percentage_str)
-                percentage_text = _convert_number_to_spanish(percentage)
+                percentage_text = _convert_number_to_language(percentage, language)
                 return f"{percentage_text} por ciento"
                 
         except ValueError:
@@ -335,7 +430,7 @@ def _normalize_percentages(text: str) -> str:
     return re.sub(percentage_pattern, replace_percentage, text)
 
 
-def _normalize_abbreviations(text: str) -> str:
+def _normalize_abbreviations(text: str, language: str = 'es') -> str:
     """Normalize common Spanish abbreviations."""
     result = text
     
@@ -361,13 +456,11 @@ def normalize_text_for_tts(text: str, language: str = "es") -> str:
     Normalize text for TTS by converting numbers, dates, times, currencies,
     percentages, and abbreviations to their spoken form.
     
-    This function is specifically designed for Spanish text normalization
-    to improve pronunciation quality for TTS models.
+    Supports multiple languages with dynamic num2words integration.
     
     Args:
         text (str): The input text to normalize
-        language (str): Language code (e.g., 'es', 'es-ES', 'es-MX')
-                       Only Spanish variants are supported
+        language (str): Language code (e.g., 'es', 'en', 'fr', 'de', etc.)
     
     Returns:
         str: Normalized text ready for TTS
@@ -376,41 +469,51 @@ def normalize_text_for_tts(text: str, language: str = "es") -> str:
         >>> normalize_text_for_tts("Tengo 25 años", "es")
         'Tengo veinticinco años'
         
-        >>> normalize_text_for_tts("El 15/03/2024 a las 3:30", "es")
-        'El quince de marzo de dos mil veinticuatro a las tres y media de la tarde'
+        >>> normalize_text_for_tts("I have 25 years", "en")
+        'I have twenty-five years'
         
         >>> normalize_text_for_tts("Cuesta $150.50", "es")
         'Cuesta ciento cincuenta dólares con cincuenta centavos'
     """
     
-    # Only apply normalization for Spanish language variants
-    if not language.lower().startswith('es'):
-        logger.debug(f"Skipping normalization for non-Spanish language: {language}")
+    # Get base language (remove variants like es-ES -> es)
+    base_lang = language.lower().split('-')[0]
+    
+    # Supported languages for num2words (based on our testing)
+    supported_languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'nl', 'pl', 'ar', 'ja', 'ko', 'tr', 'hu']
+    
+    # If language not supported, only basic normalization
+    if base_lang not in supported_languages:
+        logger.debug(f"Language '{base_lang}' not supported for full normalization, applying basic processing")
+        # For unsupported languages, we can still do basic cleanup but no number conversion
         return text
     
-    logger.debug(f"Normalizing text for Spanish TTS: '{text[:50]}...'")
+    logger.debug(f"Normalizing text for {base_lang.upper()} TTS: '{text[:50]}...'")
     
     try:
         # Apply normalizations in order of specificity (most specific first)
         normalized = text
         
         # 1. Normalize dates (before numbers to avoid conflicts)
-        normalized = _normalize_dates(normalized)
+        normalized = _normalize_dates(normalized, base_lang)
         
-        # 2. Normalize times (before numbers to avoid conflicts)
-        normalized = _normalize_times(normalized)
+        # 2. Normalize times (before numbers to avoid conflicts) - only for Spanish and English
+        if base_lang in ['es', 'en']:
+            normalized = _normalize_times(normalized, base_lang)
         
-        # 3. Normalize currencies (before numbers to avoid conflicts)
-        normalized = _normalize_currencies(normalized)
+        # 3. Normalize currencies (before numbers to avoid conflicts) - only for Spanish and English
+        if base_lang in ['es', 'en']:
+            normalized = _normalize_currencies(normalized, base_lang)
         
         # 4. Normalize percentages (before numbers to avoid conflicts)
-        normalized = _normalize_percentages(normalized)
+        normalized = _normalize_percentages(normalized, base_lang)
         
         # 5. Normalize standalone numbers
-        normalized = _normalize_numbers(normalized)
+        normalized = _normalize_numbers(normalized, base_lang)
         
-        # 6. Normalize abbreviations (last, as they might contain numbers)
-        normalized = _normalize_abbreviations(normalized)
+        # 6. Normalize abbreviations (last, as they might contain numbers) - only for Spanish
+        if base_lang == 'es':
+            normalized = _normalize_abbreviations(normalized, base_lang)
         
         # Log what was normalized if there were changes
         if normalized != text:
@@ -438,7 +541,13 @@ def is_normalization_needed(text: str, language: str = "es") -> bool:
     Returns:
         bool: True if normalization would modify the text
     """
-    if not language.lower().startswith('es'):
+    # Get base language
+    base_lang = language.lower().split('-')[0]
+    
+    # Supported languages for num2words
+    supported_languages = ['en', 'es', 'fr', 'de', 'it', 'pt', 'ru', 'nl', 'pl', 'ar', 'ja', 'ko', 'tr', 'hu']
+    
+    if base_lang not in supported_languages:
         return False
     
     # Check for patterns that would be normalized
