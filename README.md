@@ -1,6 +1,7 @@
 # EPUB to Audiobook Converter
 
-This project provides a command-line tool to convert EPUB ebooks into audiobooks. It now supports both [Microsoft Azure Text-to-Speech API](https://learn.microsoft.com/en-us/azure/cognitive-services/speech-service/rest-text-to-speech) (alternatively [EdgeTTS](https://github.com/rany2/edge-tts)) and [OpenAI Text-to-Speech API](https://platform.openai.com/docs/guides/text-to-speech) to generate audio for each chapter of the ebook. The output audio files are optimized for use with [Audiobookshelf](https://github.com/advplyr/audiobookshelf).
+This project provides a command-line tool to convert EPUB ebooks into audiobooks. It now supports both [Microsoft Azure Text-to-Speech API](https://learn.microsoft.com/en-us/azure/cognitive-services/speech-service/rest-text-to-speech) (alternatively [EdgeTTS](https://github.com/rany2/edge-tts)) and [OpenAI Text-to-Speech API](https://platform.openai.com/docs/guides/text-to-speech) to generate audio for each chapter of the ebook. The output audio files are optimized for use with [Audiobookshelf](https://github.com/advplyr/audiobookshelf)
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kroryan/epub_to_audiobook)
 
 ## Recent Updates
 
@@ -325,6 +326,7 @@ If you encounter any issues or have questions, please open an issue on the proje
 
 
 Este proyecto proporciona una herramienta de línea de comandos para convertir libros electrónicos EPUB en audiolibros. Ahora soporta tanto la [API de Microsoft Azure Text-to-Speech](https://learn.microsoft.com/en-us/azure/cognitive-services/speech-service/rest-text-to-speech) (alternativamente [EdgeTTS](https://github.com/rany2/edge-tts)) como la [API de OpenAI Text-to-Speech](https://platform.openai.com/docs/guides/text-to-speech) para generar el audio para cada capítulo del libro electrónico. Los archivos de audio de salida están optimizados para su uso con [Audiobookshelf](https://github.com/advplyr/audiobookshelf).
+[![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/kroryan/epub_to_audiobook)
 
 
 ## Actualizaciones Recientes
