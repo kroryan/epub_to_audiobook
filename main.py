@@ -27,7 +27,7 @@ def handle_args():
         "--tts",
         choices=get_supported_tts_providers(),
         default=get_supported_tts_providers()[0],
-        help="Choose TTS provider (default: azure). azure: Azure Cognitive Services, openai: OpenAI TTS API. When using azure, environment variables MS_TTS_KEY and MS_TTS_REGION must be set. When using openai, environment variable OPENAI_API_KEY must be set.",
+        help="Choose TTS provider (default: azure). azure: Azure Cognitive Services, openai: OpenAI TTS API, kokoro: Local Kokoro TTS server. When using azure, environment variables MS_TTS_KEY and MS_TTS_REGION must be set. When using openai, environment variable OPENAI_API_KEY must be set. When using kokoro, ensure local server is running on http://localhost:8880.",
     )
     parser.add_argument(
         "--log",
@@ -244,6 +244,40 @@ def handle_args():
         type=float,
         help="Noise scale for word duration variability",
     )
+    kokoro_tts_group = parser.add_argument_group(title="kokoro specific")
+    kokoro_tts_group.add_argument(
+        "--kokoro_base_url",
+        default="http://localhost:8880",
+        help="Base URL for Kokoro TTS server",
+    )
+    kokoro_tts_group.add_argument(
+        "--kokoro_volume_multiplier",
+        default=1.0,
+        type=float,
+        help="Volume multiplier for audio output (0.1 to 2.0)",
+    )
+    kokoro_tts_group.add_argument(
+        "--kokoro_voice_combination",
+        help="Combine voices using syntax like 'voice1+voice2(0.5)' or 'voice1-voice2(0.3)'",
+    )
+    kokoro_tts_group.add_argument(
+        "--kokoro_stream",
+        action="store_true",
+        default=True,
+        help="Use streaming mode for faster generation",
+    )
+    kokoro_tts_group.add_argument(
+        "--kokoro_return_timestamps",
+        action="store_true",
+        help="Include word-level timestamps in output",
+    )
+    kokoro_tts_group.add_argument(
+        "--kokoro_normalize_text",
+        action="store_true",
+        default=True,
+        help="Enable advanced text normalization (URLs, emails, phones, etc.)",
+    )
+
 
     args = parser.parse_args()
     return GeneralConfig(args)

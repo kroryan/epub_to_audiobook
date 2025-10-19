@@ -1,0 +1,19 @@
+{
+  "name": "Voice_Combination_20251019_022742",
+  "created": "2025-10-19T02:27:42.324856",
+  "voices": [
+    {
+      "voice": "am_adam",
+      "weight": 1.0,
+      "index": 0
+    },
+    {
+      "voice": "af_bella",
+      "weight": 0.5,
+      "index": 1
+    }
+  ],
+  "combination_string": "am_adam+af_bella(0.5)",
+  "version": "1.0",
+  "description": "Combinación de 2 voces"
+}
