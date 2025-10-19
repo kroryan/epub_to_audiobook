@@ -1,6 +1,6 @@
 {
-  "name": "Voice_Combination_20251019_025527",
-  "created": "2025-10-19T02:55:27.279916",
+  "name": "Voice_Combination_20251019_032012",
+  "created": "2025-10-19T03:20:12.852501",
   "voices": [
     {
       "voice": "em_santa",
@@ -8,12 +8,12 @@
       "index": 0
     },
     {
-      "voice": "ef_dora",
+      "voice": "am_eric",
       "weight": 0.5,
       "index": 1
     }
   ],
-  "combination_string": "em_santa+ef_dora(0.5)",
+  "combination_string": "em_santa+am_eric(0.5)",
   "version": "1.0",
   "description": "Combinación de 2 voces"
 }
