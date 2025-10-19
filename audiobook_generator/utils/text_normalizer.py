@@ -185,22 +185,69 @@ def _basic_number_to_english(num: int) -> str:
 
 def _normalize_numbers(text: str, language: str = 'es') -> str:
     """Normalize standalone numbers in text."""
-    # Pattern for standalone numbers (not part of dates, times, currencies, etc.)
-    # Use negative lookahead and lookbehind to avoid numbers in dates, times, and currencies
-    number_pattern = r'(?<![\/\-\.\:$€£])\b(\d{1,6})\b(?![\/\-\.\:$€£%])'
+    # Pattern for standalone numbers including comma-separated thousands
+    # Avoid numbers in dates, times, currencies, decimals, etc.
+    number_patterns = [
+        # Large numbers with commas (e.g., 1,250,000) - increased limit for millions
+        r'(?<![\/\-\.\:$€£])\b(\d{1,3}(?:,\d{3})+)\b(?![\/\-\.\:$€£%])',
+        # Regular numbers without commas (including 4-digit years)
+        r'(?<![\/\-\.\:$€£,])\b(\d{1,4})\b(?![\/\-\.\:$€£%,])'
+    ]
     
-    def replace_number(match):
+    def replace_comma_number(match):
+        """Replace comma-separated numbers like 1,250,000"""
+        num_str = match.group(1)
+        try:
+            # Remove commas and convert to int
+            num = int(num_str.replace(',', ''))
+            if num > 10000000:  # Increased limit to handle millions
+                return num_str  # Keep original for very large numbers (10M+)
+            return _convert_number_to_language(num, language)
+        except ValueError:
+            return num_str
+    
+    def replace_simple_number(match):
+        """Replace simple numbers"""
         num_str = match.group(1)
         try:
             num = int(num_str)
-            # Skip very large numbers to avoid performance issues
-            if num > 999999:
+            if num > 9999:  # Allow years like 1990, 2020, etc.
                 return num_str
             return _convert_number_to_language(num, language)
         except ValueError:
             return num_str
     
-    return re.sub(number_pattern, replace_number, text)
+    # Process comma numbers first, then simple numbers
+    result = text
+    result = re.sub(number_patterns[0], replace_comma_number, result)
+    result = re.sub(number_patterns[1], replace_simple_number, result)
+    
+    return result
+
+
+def _normalize_list_items(text: str, language: str = 'es') -> str:
+    """Normalize numbered list items at the start of lines.
+
+    Converts list markers like "1. ", "2) ", "3 - " into their spoken form
+    (e.g. "uno ", "two ") and removes the punctuation so TTS doesn't read
+    a literal 'point' or similar marker.
+    """
+    # Match start-of-line list markers: optional whitespace, digits, then one of . ) - : followed by space
+    list_pattern = re.compile(r'(?m)^(?P<indent>\s*)(?P<num>\d{1,6})\s*(?:[\.\)\-:])\s+')
+
+    def replace_list(match):
+        indent = match.group('indent') or ''
+        num_str = match.group('num')
+        try:
+            num = int(num_str)
+            # Convert number to language-aware text
+            spoken = _convert_number_to_language(num, language)
+            # Return spoken number plus a single space (preserve indent)
+            return f"{indent}{spoken} "
+        except Exception:
+            return match.group(0)
+
+    return list_pattern.sub(replace_list, text)
 
 
 def _normalize_dates(text: str, language: str = 'es') -> str:
@@ -245,13 +292,37 @@ def _normalize_dates(text: str, language: str = 'es') -> str:
                     1: "January", 2: "February", 3: "March", 4: "April", 5: "May", 6: "June",
                     7: "July", 8: "August", 9: "September", 10: "October", 11: "November", 12: "December"
                 }
-                ordinals = {
-                    1: "first", 2: "second", 3: "third", 4: "fourth", 5: "fifth", 
-                    21: "twenty-first", 22: "twenty-second", 23: "twenty-third", 31: "thirty-first"
-                }
-                day_text = ordinals.get(day, f"{_convert_number_to_language(day, language)}")
-                if day_text == _convert_number_to_language(day, language) and not day_text.endswith('th'):
-                    day_text += "th"
+                def get_english_ordinal(num):
+                    """Get English ordinal for a number"""
+                    if 10 <= num % 100 <= 20:  # Special case for 11th, 12th, 13th, etc.
+                        suffix = "th"
+                    else:
+                        suffix = {1: "st", 2: "nd", 3: "rd"}.get(num % 10, "th")
+                    
+                    base_num = _convert_number_to_language(num, language)
+                    # Handle special cases
+                    if num == 1:
+                        return "first"
+                    elif num == 2:
+                        return "second" 
+                    elif num == 3:
+                        return "third"
+                    elif num == 5:
+                        return "fifth"
+                    elif num == 21:
+                        return "twenty-first"
+                    elif num == 22:
+                        return "twenty-second"
+                    elif num == 23:
+                        return "twenty-third"
+                    elif num == 25:
+                        return "twenty-fifth" 
+                    elif num == 31:
+                        return "thirty-first"
+                    else:
+                        return base_num + suffix
+                
+                day_text = get_english_ordinal(day)
                 month_text = english_months[month]
                 year_text = _convert_number_to_language(year, language)
                 return f"{month_text} {day_text}, {year_text}"
@@ -297,43 +368,72 @@ def _normalize_times(text: str, language: str = 'es') -> str:
                         hours_text = _convert_number_to_language(hours, language)
                     period = "de la tarde" if language == 'es' else "PM"
             else:
-                # 24-hour format OR ambiguous time - infer from context and hour
+                # 24-hour format OR ambiguous time
                 hours_text = _convert_number_to_language(hours, language)
                 
-                # If hours are 1-11 without AM/PM, assume afternoon/evening context for times like "las 3:30"
-                if hours >= 1 and hours <= 11:
-                    # Context clue: if preceded by "las", likely afternoon
-                    full_match = match.group(0)
-                    text_before = match.string[:match.start()]
-                    if "las" in text_before[-10:]:  # Check last 10 chars before match
+                # Language-specific time periods
+                if language == 'es':
+                    if hours >= 1 and hours <= 11:
+                        full_match = match.group(0)
+                        text_before = match.string[:match.start()]
+                        period = "de la tarde" if "las" in text_before[-10:] else "de la mañana"
+                    elif hours == 12:
+                        period = "del mediodía"
+                    elif hours < 6:
+                        period = "de la madrugada"
+                    elif hours < 12:
+                        period = "de la mañana"
+                    elif hours < 19:
                         period = "de la tarde"
                     else:
-                        period = "de la mañana"
-                elif hours == 12:
-                    period = "del mediodía"
-                elif hours < 6:
-                    period = "de la madrugada"
-                elif hours < 12:
-                    period = "de la mañana"
-                elif hours < 19:
-                    period = "de la tarde"
+                        period = "de la noche"
+                elif language == 'en':
+                    if hours < 12:
+                        period = "AM"
+                    else:
+                        period = "PM"
                 else:
-                    period = "de la noche"
+                    # For other languages, use 24-hour format
+                    period = ""
             
-            # Convert minutes
-            if minutes == 0:
-                return f"{hours_text} en punto {period}"
-            elif minutes == 15:
-                return f"{hours_text} y cuarto {period}"
-            elif minutes == 30:
-                return f"{hours_text} y media {period}"
-            elif minutes == 45:
-                next_hour = (hours + 1) % 24
-                next_hour_text = _convert_number_to_language(next_hour, language)
-                return f"cuarto para las {next_hour_text} {period}"
+            # Language-specific minute formatting
+            if language == 'es':
+                if minutes == 0:
+                    return f"{hours_text} en punto {period}".strip()
+                elif minutes == 15:
+                    return f"{hours_text} y cuarto {period}".strip()
+                elif minutes == 30:
+                    return f"{hours_text} y media {period}".strip()
+                elif minutes == 45:
+                    next_hour = (hours + 1) % 24
+                    next_hour_text = _convert_number_to_language(next_hour, language)
+                    return f"cuarto para las {next_hour_text} {period}".strip()
+                else:
+                    minutes_text = _convert_number_to_language(minutes, language)
+                    return f"{hours_text} y {minutes_text} {period}".strip()
+            elif language == 'en':
+                if minutes == 0:
+                    return f"{hours_text} o'clock {period}".strip()
+                elif minutes == 15:
+                    return f"quarter past {hours_text} {period}".strip()
+                elif minutes == 30:
+                    return f"half past {hours_text} {period}".strip()
+                elif minutes == 45:
+                    next_hour = (hours + 1) % 12 if hours < 12 else (hours + 1 - 12)
+                    if next_hour == 0:
+                        next_hour = 12
+                    next_hour_text = _convert_number_to_language(next_hour, language)
+                    return f"quarter to {next_hour_text} {period}".strip()
+                else:
+                    minutes_text = _convert_number_to_language(minutes, language)
+                    return f"{hours_text} {minutes_text} {period}".strip()
             else:
-                minutes_text = _convert_number_to_language(minutes, language)
-                return f"{hours_text} y {minutes_text} {period}"
+                # Other languages: simple format
+                minutes_text = _convert_number_to_language(minutes, language) if minutes > 0 else ""
+                if minutes_text:
+                    return f"{hours_text}:{minutes_text}"
+                else:
+                    return f"{hours_text}:00"
                 
         except ValueError:
             return match.group(0)  # Return original on error
@@ -343,64 +443,99 @@ def _normalize_times(text: str, language: str = 'es') -> str:
 
 def _normalize_currencies(text: str, language: str = 'es') -> str:
     """Normalize currency expressions like $150, €20, £30, etc."""
-    # Patterns for different currencies
+    
+    # Language-specific currency terms
+    currency_terms = {
+        'es': {
+            'dollars': ('dólares', 'dólar', 'centavos', 'centavo'),
+            'euros': ('euros', 'euro', 'céntimos', 'céntimo'),
+            'pounds': ('libras', 'libra', 'peniques', 'penique'),
+            'pesos': ('pesos', 'peso', 'centavos', 'centavo')
+        },
+        'en': {
+            'dollars': ('dollars', 'dollar', 'cents', 'cent'),
+            'euros': ('euros', 'euro', 'cents', 'cent'),
+            'pounds': ('pounds', 'pound', 'pence', 'penny'),
+            'pesos': ('pesos', 'peso', 'cents', 'cent')
+        },
+        'fr': {
+            'dollars': ('dollars', 'dollar', 'cents', 'cent'),
+            'euros': ('euros', 'euro', 'centimes', 'centime'),
+            'pounds': ('livres', 'livre', 'pence', 'penny'),
+            'pesos': ('pesos', 'peso', 'centimes', 'centime')
+        }
+    }
+    
+    # Get currency terms for language, fallback to Spanish
+    terms = currency_terms.get(language, currency_terms['es'])
+    
+    # Patterns for different currencies with comma-separated thousands
     currency_patterns = [
-        (r'\$(\d+)(?:\.(\d{1,2}))?', 'dólares', 'centavos'),
-        (r'€(\d+)(?:\.(\d{1,2}))?', 'euros', 'céntimos'),
-        (r'£(\d+)(?:\.(\d{1,2}))?', 'libras', 'peniques'),
-        (r'(\d+)\s*USD', 'dólares estadounidenses', 'centavos'),
-        (r'(\d+)\s*EUR', 'euros', 'céntimos'),
-        (r'(\d+)\s*MXN', 'pesos mexicanos', 'centavos'),
-        (r'(\d+)\s*pesos?', 'pesos', 'centavos'),
+        (r'\$(\d{1,3}(?:,\d{3})*)(?:\.(\d{1,2}))?', terms['dollars']),
+        (r'€(\d{1,3}(?:,\d{3})*)(?:\.(\d{1,2}))?', terms['euros']),
+        (r'£(\d{1,3}(?:,\d{3})*)(?:\.(\d{1,2}))?', terms['pounds']),
+        (r'(\d{1,3}(?:,\d{3})*)\s*USD', terms['dollars']),
+        (r'(\d{1,3}(?:,\d{3})*)\s*EUR', terms['euros']),
+        (r'(\d{1,3}(?:,\d{3})*)\s*pesos?', terms['pesos']),
     ]
     
-    def replace_currency(match, main_unit, sub_unit):
+    def replace_currency(match, currency_terms):
         try:
-            main_amount = int(match.group(1))
+            main_amount_str = match.group(1)
             sub_amount = int(match.group(2)) if match.lastindex >= 2 and match.group(2) else None
             
+            # Handle comma-separated numbers
+            main_amount = int(main_amount_str.replace(',', ''))
             main_text = _convert_number_to_language(main_amount, language)
             
+            # Get plural/singular forms: (plural, singular, sub_plural, sub_singular)
+            main_plural, main_singular, sub_plural, sub_singular = currency_terms
+            
             # Handle singular/plural for main unit
-            if main_amount == 1:
-                # Special cases for currency units
-                if main_unit == 'dólares':
-                    main_unit_text = 'dólar'
-                elif main_unit == 'euros':
-                    main_unit_text = 'euro'
-                elif main_unit == 'libras':
-                    main_unit_text = 'libra'
-                elif main_unit == 'pesos':
-                    main_unit_text = 'peso'
-                else:
-                    main_unit_text = main_unit[:-1] if main_unit.endswith('s') else main_unit  # Remove 's' for singular
-            else:
-                main_unit_text = main_unit
+            main_unit_text = main_singular if main_amount == 1 else main_plural
+            
+            # Language-specific connecting words
+            connector = {
+                'es': 'con',
+                'en': 'and',
+                'fr': 'et',
+                'de': 'und',
+                'it': 'e'
+            }.get(language, 'con')
             
             result = f"{main_text} {main_unit_text}"
             
             # Add sub-amount if present
             if sub_amount is not None and sub_amount > 0:
                 sub_text = _convert_number_to_language(sub_amount, language)
-                if sub_amount == 1:
-                    sub_unit_text = sub_unit[:-1] if sub_unit.endswith('s') else sub_unit
-                else:
-                    sub_unit_text = sub_unit
-                result += f" con {sub_text} {sub_unit_text}"
+                sub_unit_text = sub_singular if sub_amount == 1 else sub_plural
+                result += f" {connector} {sub_text} {sub_unit_text}"
             
             return result
         except ValueError:
             return match.group(0)  # Return original on error
     
     result = text
-    for pattern, main_unit, sub_unit in currency_patterns:
-        result = re.sub(pattern, lambda m: replace_currency(m, main_unit, sub_unit), result)
+    for pattern, currency_terms in currency_patterns:
+        result = re.sub(pattern, lambda m: replace_currency(m, currency_terms), result)
     
     return result
 
 
 def _normalize_percentages(text: str, language: str = 'es') -> str:
     """Normalize percentage expressions like 15%, 3.5%, etc."""
+    # Language-specific percentage terms
+    percentage_terms = {
+        'es': ('coma', 'por ciento'),
+        'en': ('point', 'percent'),
+        'fr': ('virgule', 'pour cent'),
+        'de': ('komma', 'prozent'),
+        'it': ('virgola', 'per cento'),
+        'pt': ('vírgula', 'por cento')
+    }
+    
+    decimal_word, percent_word = percentage_terms.get(language, percentage_terms['es'])
+    
     # Pattern for percentages
     percentage_pattern = r'\b(\d+(?:\.\d+)?)\s*%'
     
@@ -417,12 +552,12 @@ def _normalize_percentages(text: str, language: str = 'es') -> str:
                 whole_text = _convert_number_to_language(whole, language)
                 decimal_text = _convert_number_to_language(decimal, language)
                 
-                return f"{whole_text} coma {decimal_text} por ciento"
+                return f"{whole_text} {decimal_word} {decimal_text} {percent_word}"
             else:
                 # Handle whole number percentages
                 percentage = int(percentage_str)
                 percentage_text = _convert_number_to_language(percentage, language)
-                return f"{percentage_text} por ciento"
+                return f"{percentage_text} {percent_word}"
                 
         except ValueError:
             return match.group(0)  # Return original on error
@@ -508,10 +643,13 @@ def normalize_text_for_tts(text: str, language: str = "es") -> str:
         # 4. Normalize percentages (before numbers to avoid conflicts)
         normalized = _normalize_percentages(normalized, base_lang)
         
-        # 5. Normalize standalone numbers
+        # 5. Normalize list items (remove dots like "1.") before number normalization
+        normalized = _normalize_list_items(normalized, base_lang)
+
+        # 6. Normalize standalone numbers
         normalized = _normalize_numbers(normalized, base_lang)
         
-        # 6. Normalize abbreviations (last, as they might contain numbers) - only for Spanish
+        # 7. Normalize abbreviations (last, as they might contain numbers) - only for Spanish
         if base_lang == 'es':
             normalized = _normalize_abbreviations(normalized, base_lang)
         
