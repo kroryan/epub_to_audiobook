@@ -351,7 +351,10 @@ class KokoroTTSProvider(BaseTTSProvider):
                 "input": chunk,
                 "speed": self.config.speed,
                 "response_format": self.config.output_format,
-                "stream": False,  # For now, use non-streaming for simplicity
+                # v0.2.x returns an empty body for non-streaming MP3 responses.
+                # Requests still collects the complete streamed response below,
+                # so this is compatible with the provider's non-streaming merge.
+                "stream": self.stream_audio,
                 "volume_multiplier": self.volume_multiplier,
                 "normalization_options": self.normalization_options.to_dict(),
                 "return_timestamps": self.return_timestamps,
@@ -409,7 +412,7 @@ class KokoroTTSProvider(BaseTTSProvider):
                 combined = AudioSegment.empty()
                 for tmp_file in tmp_files:
                     logger.debug(f"Loading Kokoro chunk: {tmp_file}")
-                    segment = AudioSegment.from_file(tmp_file)
+                    segment = AudioSegment.from_file(tmp_file, format=output_format)
                     combined += segment
                 
                 # Export with high quality
