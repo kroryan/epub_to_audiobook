@@ -43,6 +43,12 @@ class EpubBookParser(BaseBookParser):
         chapters = []
         search_and_replaces = self.get_search_and_replaces()
         for item in self.book.get_items_of_type(ebooklib.ITEM_DOCUMENT):
+            item_name = (item.get_name() or "").lower()
+            item_properties = set(getattr(item, "properties", ()) or ())
+            if "nav" in item_properties or item_name.endswith(("nav.xhtml", "toc.xhtml", "toc.html")):
+                logger.debug(f"Skipping EPUB navigation document: {item.get_name()}")
+                continue
+
             content = item.get_content()
             soup = BeautifulSoup(content, "lxml-xml")
             raw = soup.get_text(strip=False)
