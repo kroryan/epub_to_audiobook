@@ -102,6 +102,8 @@ class CoquiTTSProvider(BaseTTSProvider):
         self.price = 0.0
         # default model repo base (user can set full model name in config.coqui_model)
         self.base_model_url = "https://models.silero.ai/coqui"  # placeholder; Coqui models often hosted elsewhere
+        self._loaded_tts = None
+        self._loaded_tts_key = None
         super().__init__(config)
 
     def __str__(self) -> str:
@@ -534,52 +536,61 @@ class CoquiTTSProvider(BaseTTSProvider):
         
         logger.info(f"Using device: {device}")
 
-        # Initialize TTS model with SSL error handling
-        logger.info(f"Initializing Coqui TTS model: {tts_model}")
-        try:
-            # Intentar cargar modelo con múltiples estrategias
-            tts = self._safe_load_tts_model(tts_model, device)
-            logger.info(f"TTS model loaded successfully on {device}")
-            
-            # Log model capabilities (defensive checks)
+        # Initialize TTS model with SSL error handling. Keep it cached so a
+        # sequential Coqui run does not reload the model for every chapter.
+        cache_key = (tts_model, device)
+        tts = self._loaded_tts if self._loaded_tts_key == cache_key else None
+        if tts is not None:
+            logger.info(f"Reusing loaded Coqui model on {device}: {tts_model}")
+        else:
+            logger.info(f"Initializing Coqui TTS model: {tts_model}")
             try:
-                is_multi_speaker = getattr(tts, 'is_multi_speaker', False)
-                speakers_list = getattr(tts, 'speakers', None)
-                if is_multi_speaker:
-                    speakers_count = len(speakers_list) if speakers_list else 0
-                    logger.info(f"Multi-speaker model with {speakers_count} speakers")
-            except Exception:
-                logger.debug("Could not determine multi-speaker capabilities for TTS model")
-
-            try:
-                is_multi_lingual = getattr(tts, 'is_multi_lingual', False)
-                languages_list = getattr(tts, 'languages', None)
-                if is_multi_lingual:
-                    languages_count = len(languages_list) if languages_list else 0
-                    logger.info(f"Multi-lingual model with {languages_count} languages")
-            except Exception:
-                logger.debug("Could not determine multi-lingual capabilities for TTS model")
+                # Intentar cargar modelo con múltiples estrategias
+                tts = self._safe_load_tts_model(tts_model, device)
+                logger.info(f"TTS model loaded successfully on {device}")
                 
-        except Exception as e:
-            # Usar el sistema SSL centralizado para detectar y manejar errores
-            if ssl_manager.is_ssl_error(e):
-                logger.error("❌ Error de certificado SSL detectado. Aplicando soluciones...")
+                # Log model capabilities (defensive checks)
                 try:
-                    # Re-aplicar configuración SSL y reintentar
-                    ssl_manager.setup_ssl_environment()
-                    tts = self._safe_load_tts_model(tts_model, device)
-                    logger.info("✅ Modelo cargado exitosamente después de corregir SSL")
-                except Exception as ssl_retry_error:
-                    logger.error(f"Error persistente después de corregir SSL: {ssl_retry_error}")
-                    ssl_manager.provide_troubleshooting_info(e)
-                    raise
-            else:
-                logger.error(f"Failed to initialize TTS model {tts_model}: {e}")
-                if "local:" in model_id:
-                    logger.error("For local models, ensure the model files are correctly placed in the coqui_models directory")
+                    is_multi_speaker = getattr(tts, 'is_multi_speaker', False)
+                    speakers_list = getattr(tts, 'speakers', None)
+                    if is_multi_speaker:
+                        speakers_count = len(speakers_list) if speakers_list else 0
+                        logger.info(f"Multi-speaker model with {speakers_count} speakers")
+                except Exception:
+                    logger.debug("Could not determine multi-speaker capabilities for TTS model")
+
+                try:
+                    is_multi_lingual = getattr(tts, 'is_multi_lingual', False)
+                    languages_list = getattr(tts, 'languages', None)
+                    if is_multi_lingual:
+                        languages_count = len(languages_list) if languages_list else 0
+                        logger.info(f"Multi-lingual model with {languages_count} languages")
+                except Exception:
+                    logger.debug("Could not determine multi-lingual capabilities for TTS model")
+
+            except Exception as e:
+                # Usar el sistema SSL centralizado para detectar y manejar errores
+                if ssl_manager.is_ssl_error(e):
+                    logger.error("❌ Error de certificado SSL detectado. Aplicando soluciones...")
+                    try:
+                        # Re-aplicar configuración SSL y reintentar
+                        ssl_manager.setup_ssl_environment()
+                        tts = self._safe_load_tts_model(tts_model, device)
+                        logger.info("✅ Modelo cargado exitosamente después de corregir SSL")
+                    except Exception as ssl_retry_error:
+                        logger.error(f"Error persistente después de corregir SSL: {ssl_retry_error}")
+                        ssl_manager.provide_troubleshooting_info(e)
+                        raise
                 else:
-                    logger.error("For hub models, check the model name format (should be like 'tts_models/language/dataset/model')")
-                raise
+                    logger.error(f"Failed to initialize TTS model {tts_model}: {e}")
+                    if "local:" in model_id:
+                        logger.error("For local models, ensure the model files are correctly placed in the coqui_models directory")
+                    else:
+                        logger.error("For hub models, check the model name format (should be like 'tts_models/language/dataset/model')")
+                    raise
+
+            self._loaded_tts = tts
+            self._loaded_tts_key = cache_key
 
         tmpdir_obj = None
         try:
@@ -726,10 +737,6 @@ class CoquiTTSProvider(BaseTTSProvider):
 
             if not tmpwav.exists():
                 raise FileNotFoundError(f"Coqui TTS failed to create output file: {tmpwav}")
-
-            # set audio tags before conversion if needed
-            if audio_tags:
-                set_audio_tags(tmpwav, audio_tags)
 
             exported_file = output_file
             try:

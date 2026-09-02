@@ -29,6 +29,7 @@ def get_total_chars(chapters):
 class AudiobookGenerator:
     def __init__(self, config: GeneralConfig):
         self.config = config
+        self._coqui_provider = None
 
     def __str__(self) -> str:
         return f"{self.config}"
@@ -37,7 +38,15 @@ class AudiobookGenerator:
         """Process a single chapter: write text (if needed) and convert to audio."""
         try:
             logger.info(f"Processing chapter {idx}: {title}")
-            tts_provider = get_tts_provider(self.config)
+            # CUDA-backed Coqui models must stay in the process that loaded
+            # them. Reusing this provider also avoids reloading the model for
+            # every chapter when Coqui is selected.
+            if self.config.tts == "coqui":
+                if self._coqui_provider is None:
+                    self._coqui_provider = get_tts_provider(self.config)
+                tts_provider = self._coqui_provider
+            else:
+                tts_provider = get_tts_provider(self.config)
 
             # Save chapter text if required
             if self.config.output_text:
@@ -76,7 +85,17 @@ class AudiobookGenerator:
             logger.info("Starting audiobook generation...")
             book_parser = get_book_parser(self.config)
             tts_provider = get_tts_provider(self.config)
+            if self.config.tts == "coqui":
+                self._coqui_provider = tts_provider
 
+            # The WebUI starts chapter workers in separate processes. Resolve the
+            # user-provided output directory before spawning them so relative
+            # paths remain valid in every worker and during final MP3 export.
+            if not self.config.output_folder:
+                raise ValueError("An output directory is required")
+            self.config.output_folder = os.path.abspath(
+                os.path.expanduser(self.config.output_folder)
+            )
             os.makedirs(self.config.output_folder, exist_ok=True)
             chapters = book_parser.get_chapters(tts_provider.get_break_string())
             # Filter out empty or very short chapters
@@ -132,20 +151,25 @@ class AudiobookGenerator:
             # Track failed chapters
             failed_chapters = []
 
-            # Use multiprocessing to process chapters in parallel
-            with multiprocessing.Pool(
-                processes=self.config.worker_count,
-                initializer=setup_logging,
-                initargs=(self.config.log, self.config.log_file, True)
-            ) as pool:
-                # Process chapters and collect results
-                results = list(pool.imap_unordered(self.process_chapter_wrapper, tasks))
+            # CUDA-backed Coqui models cannot safely be loaded from forked
+            # workers. Process Coqui chapters sequentially in this process;
+            # cloud providers retain the existing parallel path.
+            if self.config.tts == "coqui":
+                logger.info("Coqui TTS selected: processing chapters sequentially to keep CUDA stable")
+                results = [self.process_chapter_wrapper(task) for task in tasks]
+            else:
+                with multiprocessing.Pool(
+                    processes=self.config.worker_count,
+                    initializer=setup_logging,
+                    initargs=(self.config.log, self.config.log_file, True)
+                ) as pool:
+                    results = list(pool.imap_unordered(self.process_chapter_wrapper, tasks))
 
-                # Check for failed chapters
-                for idx, success in results:
-                    if not success:
-                        chapter_title = chapters_to_process[idx - self.config.chapter_start][0]
-                        failed_chapters.append((idx, chapter_title))
+            # Check for failed chapters
+            for idx, success in results:
+                if not success:
+                    chapter_title = chapters_to_process[idx - self.config.chapter_start][0]
+                    failed_chapters.append((idx, chapter_title))
 
             if failed_chapters:
                 logger.warning("The following chapters failed to convert:")
@@ -161,4 +185,3 @@ class AudiobookGenerator:
             logger.exception(f"Error during audiobook generation: {e}")
         finally:
             logger.debug("AudiobookGenerator.run() method finished.")
-

@@ -6,6 +6,7 @@ __pycache__/
 
 # Virtual environment
 venv/
+.venv*/
 .idea
 .history/
 .run/
@@ -84,4 +85,3 @@ ffprobe.exe
 temp_audio/
 output/
 audiobooks/
-

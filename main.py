@@ -26,8 +26,8 @@ def handle_args():
     parser.add_argument(
         "--tts",
         choices=get_supported_tts_providers(),
-        default=get_supported_tts_providers()[0],
-        help="Choose TTS provider (default: azure). azure: Azure Cognitive Services, openai: OpenAI TTS API, kokoro: Local Kokoro TTS server. When using azure, environment variables MS_TTS_KEY and MS_TTS_REGION must be set. When using openai, environment variable OPENAI_API_KEY must be set. When using kokoro, ensure local server is running on http://localhost:8880.",
+        default="edge",
+        help="Choose TTS provider (default: edge). edge: free online Edge TTS service; azure: Azure Cognitive Services; openai: OpenAI TTS API. Azure and OpenAI require credentials.",
     )
     parser.add_argument(
         "--log",
@@ -225,6 +225,21 @@ def handle_args():
     coqui_tts_group.add_argument(
         "--coqui_speaker",
         help="Speaker ID for multi-speaker Coqui models",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_speaker_wav",
+        help="Reference audio file for XTTS voice cloning (WAV/MP3/FLAC)",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_language",
+        default="es",
+        help="Language code for multilingual Coqui models such as XTTS-v2 (default: es)",
+    )
+    coqui_tts_group.add_argument(
+        "--coqui_device",
+        choices=["cpu", "cuda"],
+        default="cuda",
+        help="Compute device for Coqui TTS (default: cuda; falls back to CPU if unavailable)",
     )
     coqui_tts_group.add_argument(
         "--coqui_length_scale",

@@ -21,12 +21,35 @@ from audiobook_generator.tts_providers.openai_tts_provider import get_openai_sup
     get_openai_supported_voices, get_openai_instructions_example, get_openai_supported_output_formats
 from audiobook_generator.tts_providers.piper_tts_provider import get_piper_supported_languages, \
     get_piper_supported_voices, get_piper_supported_qualities, get_piper_supported_speakers
-from audiobook_generator.tts_providers.coqui_tts_provider import (
-    get_coqui_supported_models, get_coqui_supported_output_formats, 
-    get_coqui_supported_languages, get_coqui_models_by_language,
-    get_coqui_supported_voices, get_coqui_supported_languages_for_model,
-    get_coqui_model_info
-)
+try:
+    from audiobook_generator.tts_providers.coqui_tts_provider import (
+        get_coqui_supported_models, get_coqui_supported_output_formats,
+        get_coqui_supported_languages, get_coqui_models_by_language,
+        get_coqui_supported_voices, get_coqui_supported_languages_for_model,
+        get_coqui_model_info,
+    )
+except ImportError:
+    # Coqui is an optional local engine. Keep the Edge-only installation usable.
+    def get_coqui_supported_models(coqui_path=None):
+        return []
+
+    def get_coqui_supported_output_formats():
+        return ["wav", "mp3"]
+
+    def get_coqui_supported_languages():
+        return ["es"]
+
+    def get_coqui_models_by_language(language):
+        return []
+
+    def get_coqui_supported_voices(model_name=None):
+        return []
+
+    def get_coqui_supported_languages_for_model(model_name=None):
+        return ["es"]
+
+    def get_coqui_model_info(model_name):
+        return {"is_multi_lingual": False, "is_multi_speaker": False, "supports_voice_cloning": False}
 from audiobook_generator.utils.log_handler import generate_unique_log_path
 from main import main
 
@@ -257,6 +280,13 @@ def apply_kokoro_max_quality_preset():
 
 def fetch_kokoro_voices(kokoro_base_url: str = "http://localhost:8880"):
     """Fetch available voices from Kokoro server using the correct endpoint."""
+    # Kokoro is opt-in and is not part of the Coqui/Edge installation.
+    if os.environ.get("ENABLE_KOKORO") != "1":
+        return [
+            "af_bella", "af_sky", "af_heart", "af_nicole", "af_sarah", "af_emma",
+            "bf_emma", "bf_sarah", "bf_nicole", "bf_sky",
+            "am_adam", "am_daniel", "bm_lewis", "bm_george",
+        ]
     try:
         # Use the correct Kokoro voices endpoint
         url = f"{kokoro_base_url.rstrip('/')}/v1/audio/voices"
