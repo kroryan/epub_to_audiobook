@@ -1,3 +1,4 @@
+import multiprocessing
 from multiprocessing import Process
 from typing import Optional
 import json
@@ -1331,7 +1332,11 @@ def launch_audiobook_generator(config):
         print("Audiobook generator already running")
         return
 
-    running_process = Process(target=main, args=(config, str(webui_log_file.absolute())))
+    # Coqui/PyTorch CUDA must start from a fresh interpreter. The default
+    # Linux fork method can deadlock while initializing the GPU model because
+    # the WebUI imports the TTS modules before launching this worker.
+    worker_context = multiprocessing.get_context("spawn")
+    running_process = worker_context.Process(target=main, args=(config, str(webui_log_file.absolute())))
     running_process.start()
 
 
