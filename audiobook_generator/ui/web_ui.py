@@ -22,6 +22,7 @@ from audiobook_generator.tts_providers.openai_tts_provider import get_openai_sup
     get_openai_supported_voices, get_openai_instructions_example, get_openai_supported_output_formats
 from audiobook_generator.tts_providers.piper_tts_provider import get_piper_supported_languages, \
     get_piper_supported_voices, get_piper_supported_qualities, get_piper_supported_speakers
+from audiobook_generator.tts_providers.kokoro_tts_provider import get_kokoro_supported_voices
 try:
     from audiobook_generator.tts_providers.coqui_tts_provider import (
         get_coqui_supported_models, get_coqui_supported_output_formats,
@@ -281,13 +282,11 @@ def apply_kokoro_max_quality_preset():
 
 def fetch_kokoro_voices(kokoro_base_url: str = "http://localhost:8880"):
     """Fetch available voices from Kokoro server using the correct endpoint."""
-    # Kokoro is opt-in and is not part of the Coqui/Edge installation.
-    if os.environ.get("ENABLE_KOKORO") != "1":
-        return [
-            "af_bella", "af_sky", "af_heart", "af_nicole", "af_sarah", "af_emma",
-            "bf_emma", "bf_sarah", "bf_nicole", "bf_sky",
-            "am_adam", "am_daniel", "bm_lewis", "bm_george",
-        ]
+    # Kokoro is installed as the local service used by this application.
+    # Keep an explicit opt-out for installations that do not run the service,
+    # but do not silently hide the Spanish voices by default.
+    if os.environ.get("ENABLE_KOKORO", "1") != "1":
+        return get_kokoro_supported_voices()
     try:
         # Use the correct Kokoro voices endpoint
         url = f"{kokoro_base_url.rstrip('/')}/v1/audio/voices"
@@ -317,12 +316,8 @@ def fetch_kokoro_voices(kokoro_base_url: str = "http://localhost:8880"):
         
     except Exception as e:
         print(f"Error fetching Kokoro voices: {e}")
-        # Return default voices as fallback
-        return [
-            "af_bella", "af_sky", "af_heart", "af_nicole", "af_sarah", "af_emma",
-            "bf_emma", "bf_sarah", "bf_nicole", "bf_sky",
-            "am_adam", "am_daniel", "bm_lewis", "bm_george"
-        ]
+        # Keep the complete built-in list available if Kokoro is still starting.
+        return get_kokoro_supported_voices()
 
 def get_kokoro_languages():
     """Get supported Kokoro languages with their full names."""
