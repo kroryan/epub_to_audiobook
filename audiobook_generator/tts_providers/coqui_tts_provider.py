@@ -357,14 +357,73 @@ class CoquiTTSProvider(BaseTTSProvider):
             return text
 
     def text_to_speech(self, text: str, output_file: str, audio_tags: AudioTags):
-        # For now implement local-only path using the TTS python package if installed
+        """Render text while preserving book paragraph boundaries.
+
+        Coqui models use punctuation for their normal prosody, but they do not
+        provide a portable paragraph-break primitive.  The EPUB parser passes
+        ``@BRK#`` as an internal marker, so paragraph boundaries are rendered as
+        actual silence instead of being spoken or replaced by a full stop.
+        """
         if not self.config.coqui_model:
             raise ValueError("Coqui model not configured (config.coqui_model)")
         
         # Apply text normalization for Spanish models
         normalized_text = self._normalize_text_if_needed(text)
-        
-        self._text_to_speech_local(normalized_text, output_file, audio_tags)
+
+        paragraph_marker = self.get_break_string().strip()
+        paragraphs = [part.strip() for part in normalized_text.split(paragraph_marker) if part.strip()]
+        if len(paragraphs) > 1:
+            self._text_to_speech_with_paragraph_pauses(paragraphs, output_file, audio_tags)
+        else:
+            self._text_to_speech_local(normalized_text, output_file, audio_tags)
+
+    def _text_to_speech_with_paragraph_pauses(self, paragraphs, output_file, audio_tags):
+        """Synthesize paragraphs independently and join them with clean silence.
+
+        Temporary WAV files avoid a lossy MP3->MP3 round trip.  Each paragraph
+        still goes through the normal XTTS chunking/cleanup path, while the
+        final export applies the configured quality settings exactly once.
+        """
+        pause_ms = max(0, int(getattr(self.config, "coqui_break_duration", 1250)))
+        logger.info(
+            "Coqui book mode: synthesizing %d paragraphs with %d ms pauses",
+            len(paragraphs),
+            pause_ms,
+        )
+
+        combined = AudioSegment.empty()
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for index, paragraph in enumerate(paragraphs, start=1):
+                paragraph_path = Path(temp_dir) / f"paragraph_{index:04d}.wav"
+                self._text_to_speech_local(paragraph, str(paragraph_path), None)
+                if not paragraph_path.exists():
+                    raise FileNotFoundError(
+                        f"Coqui TTS failed to create paragraph output: {paragraph_path}"
+                    )
+
+                paragraph_audio = AudioSegment.from_wav(paragraph_path)
+                if len(combined):
+                    combined += AudioSegment.silent(
+                        duration=pause_ms,
+                        frame_rate=paragraph_audio.frame_rate,
+                    )
+                combined += paragraph_audio
+
+        if not len(combined):
+            raise ValueError("Coqui TTS produced no audio for the EPUB paragraphs")
+
+        self._export_with_high_quality(combined, output_file)
+        if audio_tags:
+            try:
+                set_audio_tags(output_file, audio_tags)
+            except Exception as tag_err:
+                logger.warning("Failed to set audio tags on %s: %s", output_file, tag_err)
+
+        logger.info(
+            "Coqui paragraph combination completed: %d paragraphs, %d ms total",
+            len(paragraphs),
+            len(combined),
+        )
 
     def _download_model(self, model_name: str, dest_dir: Path) -> Path:
         """Download model files for a Coqui/TTS model with SSL error handling.
@@ -772,7 +831,8 @@ class CoquiTTSProvider(BaseTTSProvider):
         return 0
 
     def get_break_string(self):
-        return "."
+        # Internal marker consumed by text_to_speech; never sent to the model.
+        return " @BRK#"
 
     def get_output_file_extension(self):
         return self.config.output_format

@@ -59,6 +59,8 @@ class GeneralConfig:
         self.coqui_noise_scale = getattr(args, 'coqui_noise_scale', None)
         self.coqui_noise_w_scale = getattr(args, 'coqui_noise_w_scale', None)
         self.coqui_device = getattr(args, 'coqui_device', None)
+        # Real silence inserted between EPUB paragraphs for book-like reading.
+        self.coqui_break_duration = getattr(args, 'coqui_break_duration', 1250)
         
         # === CONFIGURACIÓN DE CALIDAD DE AUDIO COQUI ===
         self.coqui_sample_rate = getattr(args, 'coqui_sample_rate', 44100)        # 22050, 44100, 48000 Hz

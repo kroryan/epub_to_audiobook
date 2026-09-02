@@ -242,6 +242,12 @@ def handle_args():
         help="Compute device for Coqui TTS (default: cuda; falls back to CPU if unavailable)",
     )
     coqui_tts_group.add_argument(
+        "--coqui_break_duration",
+        default=1250,
+        type=int,
+        help="Silence between EPUB paragraphs in milliseconds (default: 1250)",
+    )
+    coqui_tts_group.add_argument(
         "--coqui_length_scale",
         default=1.0,
         type=float,
