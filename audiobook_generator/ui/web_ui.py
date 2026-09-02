@@ -1895,10 +1895,10 @@ def host_ui(config):
                     )
                     kokoro_language = gr.Dropdown(
                         choices=[name for code, name in get_kokoro_languages()],
-                        value="Auto-detect",
+                        value="Spanish",
                         label="Language",
                         interactive=True,
-                        info="Select language for voice filtering"
+                        info="Select language for voice filtering and pronunciation"
                     )
                 
                 with gr.Row(equal_height=True):
@@ -1912,7 +1912,7 @@ def host_ui(config):
                     # Standard voice selector (restored original)
                     kokoro_voice = get_kokoro_voices_gui(
                         os.environ.get('OPENAI_BASE_URL', 'http://localhost:8880').replace('/v1', ''), 
-                        ""
+                        "e"
                     )
                     
                     # Advanced Voice Mixer (collapsible section)

@@ -330,8 +330,30 @@ class KokoroTTSProvider(BaseTTSProvider):
         else:
             self.logger.info(f"🎵 Using single voice: {voice_to_use}")
         
-        # Determine language code
+        # Determine language code.  The UI normally stores Kokoro's one-letter
+        # code, but accept the display name too so configuration loaded from an
+        # older run cannot silently fall back to Kokoro's English default.
+        supported_languages = get_kokoro_supported_languages()
         lang_code = getattr(self.config, 'language', '') or ''
+        if lang_code not in supported_languages:
+            selected_language = str(lang_code).strip().casefold()
+            lang_code = next(
+                (code for code, name in supported_languages.items()
+                 if name.casefold() == selected_language),
+                ''
+            )
+        if not lang_code:
+            # Kokoro does not reliably infer the language from the text. When
+            # Auto-detect is selected, infer it from the selected voice so
+            # ef_*/em_* voices still use the Spanish pipeline.
+            voice_base = voice_to_use.split("+", 1)[0].split("-", 1)[0]
+            voice_prefix = voice_base[:1].lower()
+            supported_language_codes = set(supported_languages.keys())
+            if voice_prefix in supported_language_codes:
+                lang_code = voice_prefix
+                logger.info("Inferred Kokoro language '%s' from voice '%s'", lang_code, voice_to_use)
+        else:
+            logger.info("Using Kokoro language '%s' with voice '%s'", lang_code, voice_to_use)
         
         # Split text into chunks if needed
         max_chars = 2000  # Kokoro can handle longer texts than OpenAI
