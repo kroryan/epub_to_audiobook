@@ -8,6 +8,7 @@ TTS_EDGE = "edge"
 TTS_PIPER = "piper"
 TTS_COQUI = "coqui"
 TTS_KOKORO = "kokoro"
+TTS_ELEVENLABS = "elevenlabs"
 
 
 class BaseTTSProvider:  # Base interface for TTS providers
@@ -37,7 +38,7 @@ class BaseTTSProvider:  # Base interface for TTS providers
 
 # Common support methods for all TTS providers
 def get_supported_tts_providers() -> List[str]:
-    return [TTS_AZURE, TTS_OPENAI, TTS_EDGE, TTS_PIPER, TTS_COQUI, TTS_KOKORO]
+    return [TTS_AZURE, TTS_OPENAI, TTS_EDGE, TTS_PIPER, TTS_COQUI, TTS_KOKORO, TTS_ELEVENLABS]
 
 
 def get_tts_provider(config) -> BaseTTSProvider:
@@ -69,5 +70,9 @@ def get_tts_provider(config) -> BaseTTSProvider:
         from audiobook_generator.tts_providers.kokoro_tts_provider import KokoroTTSProvider
 
         return KokoroTTSProvider(config)
+    elif config.tts == TTS_ELEVENLABS:
+        from audiobook_generator.tts_providers.elevenlabs_tts_provider import ElevenLabsTTSProvider
+
+        return ElevenLabsTTSProvider(config)
     else:
         raise ValueError(f"Invalid TTS provider: {config.tts}")

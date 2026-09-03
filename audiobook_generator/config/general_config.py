@@ -31,6 +31,13 @@ class GeneralConfig:
         self.instructions = getattr(args, 'instructions', None)
         self.speed = getattr(args, 'speed', None)
 
+        # ElevenLabs specific arguments
+        self.elevenlabs_api_key = getattr(args, 'elevenlabs_api_key', None)
+        self.elevenlabs_language = getattr(args, 'elevenlabs_language', None)
+        self.elevenlabs_accent = getattr(args, 'elevenlabs_accent', None)
+        self.elevenlabs_voice_search = getattr(args, 'elevenlabs_voice_search', None)
+        self.elevenlabs_break_duration = getattr(args, 'elevenlabs_break_duration', 1250)
+
         # TTS provider: Azure & Edge TTS specific arguments
         self.break_duration = getattr(args, 'break_duration', None)
 

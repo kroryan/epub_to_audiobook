@@ -23,6 +23,14 @@ from audiobook_generator.tts_providers.openai_tts_provider import get_openai_sup
 from audiobook_generator.tts_providers.piper_tts_provider import get_piper_supported_languages, \
     get_piper_supported_voices, get_piper_supported_qualities, get_piper_supported_speakers
 from audiobook_generator.tts_providers.kokoro_tts_provider import get_kokoro_supported_voices
+from audiobook_generator.tts_providers.elevenlabs_tts_provider import (
+    fetch_elevenlabs_voices,
+    get_elevenlabs_accent_choices,
+    get_elevenlabs_language_choices,
+    get_elevenlabs_supported_models,
+    get_elevenlabs_supported_output_formats,
+    get_elevenlabs_voice_choices,
+)
 try:
     from audiobook_generator.tts_providers.coqui_tts_provider import (
         get_coqui_supported_models, get_coqui_supported_output_formats,
@@ -70,7 +78,8 @@ def on_tab_change(evt: gr.SelectData):
         "Piper": "Piper",
         "Coqui TTS": "Coqui",  # Mapear "Coqui TTS" a "Coqui"
         "Coqui": "Coqui",
-        "Kokoro": "Kokoro"
+        "Kokoro": "Kokoro",
+        "ElevenLabs": "ElevenLabs",
     }
     selected_tts = tab_mapping.get(evt.value, evt.value)
     print(f"Selected TTS provider: {selected_tts}")
@@ -371,6 +380,65 @@ def get_kokoro_voices_gui(base_url: str = None, language_code: str = ""):
         interactive=True, 
         allow_custom_value=True, 
         info=f"Select a Kokoro voice ({len(filtered_voices)} available)"
+    )
+
+
+def refresh_elevenlabs_voice_explorer(api_key):
+    """Load the account's voices and initialize language/accent filters."""
+    try:
+        voices = fetch_elevenlabs_voices(api_key)
+        language_choices = get_elevenlabs_language_choices(voices)
+        accent_choices = get_elevenlabs_accent_choices(voices, "es")
+        voice_choices = get_elevenlabs_voice_choices(voices, "es")
+        return (
+            voices,
+            gr.Dropdown(choices=language_choices, value="es", interactive=True),
+            gr.Dropdown(choices=accent_choices, value="", interactive=True),
+            gr.Dropdown(
+                choices=voice_choices,
+                value=voice_choices[0][1] if voice_choices else None,
+                interactive=True,
+                allow_custom_value=False,
+            ),
+            f"✅ {len(voices)} voces cargadas. Se muestran las voces compatibles con español.",
+        )
+    except Exception as exc:
+        logger_message = f"❌ No se pudieron cargar las voces de ElevenLabs: {exc}"
+        return (
+            [],
+            gr.Dropdown(choices=[("Todos los idiomas", "")], value="", interactive=True),
+            gr.Dropdown(choices=[("Todos los acentos", "")], value="", interactive=True),
+            gr.Dropdown(choices=[], value=None, interactive=True),
+            logger_message,
+        )
+
+
+def filter_elevenlabs_voice_explorer(voices, language_code="", accent="", search=""):
+    """Refresh accent and voice choices without another API request."""
+    accent_choices = get_elevenlabs_accent_choices(voices or [], language_code or "")
+    voice_choices = get_elevenlabs_voice_choices(
+        voices or [], language_code or "", accent or "", search or ""
+    )
+    return (
+        gr.Dropdown(choices=accent_choices, value=accent or "", interactive=True),
+        gr.Dropdown(
+            choices=voice_choices,
+            value=voice_choices[0][1] if voice_choices else None,
+            interactive=True,
+            allow_custom_value=False,
+        ),
+    )
+
+
+def filter_elevenlabs_voices_only(voices, language_code="", accent="", search=""):
+    voice_choices = get_elevenlabs_voice_choices(
+        voices or [], language_code or "", accent or "", search or ""
+    )
+    return gr.Dropdown(
+        choices=voice_choices,
+        value=voice_choices[0][1] if voice_choices else None,
+        interactive=True,
+        allow_custom_value=False,
     )
 
 def update_kokoro_voices_by_language(language_code, base_url):
@@ -1151,6 +1219,10 @@ def process_ui_form(input_file, output_dir, worker_count, log_level, output_text
                     model, voices, speed, openai_output_format, instructions,
                     # OpenAI audio quality inputs
                     openai_sample_rate, openai_audio_bitrate, openai_audio_channels, openai_wav_bit_depth, openai_mp3_quality, openai_enable_limiter, openai_normalize_volume,
+                    # ElevenLabs inputs
+                    elevenlabs_api_key, elevenlabs_model, elevenlabs_language, elevenlabs_accent,
+                    elevenlabs_voice_search, elevenlabs_voice, elevenlabs_output_format,
+                    elevenlabs_speed, elevenlabs_break_duration,
                     azure_language, azure_voice, azure_output_format, azure_break_duration,
                     edge_language, edge_voice, edge_output_format, proxy, edge_voice_rate, edge_volume, edge_pitch, edge_break_duration,
                     # Coqui inputs
@@ -1207,6 +1279,18 @@ def process_ui_form(input_file, output_dir, worker_count, log_level, output_text
         config.mp3_quality = openai_mp3_quality
         config.enable_limiter = openai_enable_limiter
         config.normalize_volume = openai_normalize_volume
+    elif selected_tts == "ElevenLabs":
+        config.tts = "elevenlabs"
+        config.language = elevenlabs_language or "es"
+        config.voice_name = elevenlabs_voice
+        config.model_name = elevenlabs_model
+        config.output_format = elevenlabs_output_format or "mp3"
+        config.speed = elevenlabs_speed
+        config.elevenlabs_api_key = (elevenlabs_api_key or "").strip() or None
+        config.elevenlabs_language = elevenlabs_language or "es"
+        config.elevenlabs_accent = elevenlabs_accent or ""
+        config.elevenlabs_voice_search = elevenlabs_voice_search or ""
+        config.elevenlabs_break_duration = elevenlabs_break_duration
     elif selected_tts == "Kokoro":
         # Use dedicated Kokoro TTS provider with all advanced features
         config.tts = "kokoro"
@@ -1454,6 +1538,101 @@ def host_ui(config):
                         )
                 
                 open_ai_tab.select(on_tab_change, inputs=None, outputs=None)
+            with gr.Tab("ElevenLabs", id="elevenlabs_tab_id") as elevenlabs_tab:
+                elevenlabs_tab.select(on_tab_change, inputs=None, outputs=None)
+                gr.Markdown(
+                    "**ElevenLabs TTS** — Voz online con detección de idioma y acento según la voz. "
+                    "Necesitas una API key de ElevenLabs; el consumo depende de tu cuota gratuita."
+                )
+                elevenlabs_voices_state = gr.State([])
+                with gr.Row(equal_height=True):
+                    elevenlabs_api_key = gr.Textbox(
+                        label="ElevenLabs API key",
+                        type="password",
+                        value="",
+                        placeholder="Pega tu key o usa ELEVENLABS_API_KEY",
+                        info="La key no se muestra en los logs."
+                    )
+                    elevenlabs_refresh = gr.Button("🔄 Cargar voces", variant="primary")
+                    elevenlabs_status = gr.Textbox(
+                        label="Estado del explorador", value="Introduce la key y pulsa Cargar voces",
+                        interactive=False, max_lines=2
+                    )
+                with gr.Row(equal_height=True):
+                    elevenlabs_model = gr.Dropdown(
+                        choices=get_elevenlabs_supported_models(),
+                        value="eleven_multilingual_v2",
+                        label="Modelo",
+                        interactive=True,
+                        info="Multilingual v2 es la opción estable para narración larga en español."
+                    )
+                    elevenlabs_language = gr.Dropdown(
+                        choices=[("Español (es)", "es"), ("Todos los idiomas", "")],
+                        value="es",
+                        label="Idioma",
+                        interactive=True,
+                        info="Filtra las voces verificadas para ese idioma."
+                    )
+                    elevenlabs_accent = gr.Dropdown(
+                        choices=[("Todos los acentos", "")],
+                        value="",
+                        label="Acento (opcional)",
+                        interactive=True,
+                        info="Solo filtra voces que anuncian ese acento; no lo fuerza artificialmente."
+                    )
+                with gr.Row(equal_height=True):
+                    elevenlabs_voice_search = gr.Textbox(
+                        label="Explorar voces",
+                        placeholder="Busca por nombre, género, uso o acento…",
+                        interactive=True
+                    )
+                    elevenlabs_voice = gr.Dropdown(
+                        choices=[],
+                        value=None,
+                        label="Voz seleccionada",
+                        interactive=True,
+                        allow_custom_value=False,
+                        info="Carga las voces y selecciona una del listado."
+                    )
+                    elevenlabs_output_format = gr.Dropdown(
+                        choices=get_elevenlabs_supported_output_formats(),
+                        value="mp3",
+                        label="Formato",
+                        interactive=False
+                    )
+                with gr.Row(equal_height=True):
+                    elevenlabs_speed = gr.Slider(
+                        minimum=0.5, maximum=2.0, step=0.05, value=1.0,
+                        label="Velocidad", info="1.0 es velocidad normal."
+                    )
+                    elevenlabs_break_duration = gr.Slider(
+                        minimum=0, maximum=5000, step=50, value=1250,
+                        label="Pausa entre párrafos (ms)",
+                        info="Los párrafos se separan sin cortar frases ni palabras."
+                    )
+                elevenlabs_refresh.click(
+                    fn=refresh_elevenlabs_voice_explorer,
+                    inputs=[elevenlabs_api_key],
+                    outputs=[
+                        elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent,
+                        elevenlabs_voice, elevenlabs_status,
+                    ],
+                )
+                elevenlabs_language.change(
+                    fn=filter_elevenlabs_voice_explorer,
+                    inputs=[elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent, elevenlabs_voice_search],
+                    outputs=[elevenlabs_accent, elevenlabs_voice],
+                )
+                elevenlabs_accent.change(
+                    fn=filter_elevenlabs_voices_only,
+                    inputs=[elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent, elevenlabs_voice_search],
+                    outputs=elevenlabs_voice,
+                )
+                elevenlabs_voice_search.change(
+                    fn=filter_elevenlabs_voices_only,
+                    inputs=[elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent, elevenlabs_voice_search],
+                    outputs=elevenlabs_voice,
+                )
             with gr.Tab("Azure", id="azure_tab_id") as azure_tab:
                 gr.Markdown("It is expected that user configured: `MS_TTS_KEY` and `MS_TTS_REGION` in the environment variables.")
                 with gr.Row(equal_height=True):
@@ -2395,6 +2574,10 @@ def host_ui(config):
                     model, voices, speed, openai_output_format, instructions,
                     # OpenAI audio quality inputs
                     openai_sample_rate, openai_audio_bitrate, openai_audio_channels, openai_wav_bit_depth, openai_mp3_quality, openai_enable_limiter, openai_normalize_volume,
+                    # ElevenLabs inputs
+                    elevenlabs_api_key, elevenlabs_model, elevenlabs_language, elevenlabs_accent,
+                    elevenlabs_voice_search, elevenlabs_voice, elevenlabs_output_format,
+                    elevenlabs_speed, elevenlabs_break_duration,
                     azure_language, azure_voice, azure_output_format, azure_break_duration,
                     edge_language, edge_voice, edge_output_format, proxy, edge_voice_rate, edge_volume, edge_pitch, edge_break_duration,
                     # Coqui inputs (must appear before Piper inputs in the handler signature)
