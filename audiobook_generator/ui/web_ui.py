@@ -398,7 +398,12 @@ def refresh_elevenlabs_voice_explorer(api_key):
         return (
             voices,
             gr.Dropdown(choices=language_choices, value="", interactive=True),
-            gr.Dropdown(choices=accent_choices, value="", interactive=True),
+            gr.Dropdown(
+                choices=accent_choices,
+                value="",
+                interactive=True,
+                allow_custom_value=True,
+            ),
             gr.Dropdown(
                 choices=voice_choices,
                 value=voice_choices[0][1] if voice_choices else None,
@@ -412,8 +417,13 @@ def refresh_elevenlabs_voice_explorer(api_key):
         return (
             [],
             gr.Dropdown(choices=[("Todos los idiomas", "")], value="", interactive=True),
-            gr.Dropdown(choices=[("Todos los acentos", "")], value="", interactive=True),
-            gr.Dropdown(choices=[], value=None, interactive=True),
+            gr.Dropdown(
+                choices=[("Todos los acentos", "")],
+                value="",
+                interactive=True,
+                allow_custom_value=True,
+            ),
+            gr.Dropdown(choices=[], value=None, interactive=True, allow_custom_value=True),
             logger_message,
         )
 
@@ -428,7 +438,12 @@ def filter_elevenlabs_voice_explorer(voices, language_code="", accent="", search
     return (
         # A language change always resets the accent. Keeping the old accent
         # could incorrectly collapse the list to zero or one voices.
-        gr.Dropdown(choices=accent_choices, value="", interactive=True),
+        gr.Dropdown(
+            choices=accent_choices,
+            value="",
+            interactive=True,
+            allow_custom_value=True,
+        ),
         gr.Dropdown(
             choices=voice_choices,
             value=voice_choices[0][1] if voice_choices else None,
@@ -1601,6 +1616,7 @@ def host_ui(config):
                         value="",
                         label="Acento (opcional)",
                         interactive=True,
+                        allow_custom_value=True,
                         info="Solo filtra voces que anuncian ese acento; no lo fuerza artificialmente."
                     )
                 with gr.Row(equal_height=True):
