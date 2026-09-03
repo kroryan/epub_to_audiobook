@@ -1,4 +1,5 @@
 import argparse
+import logging
 import os
 from pathlib import Path
 
@@ -346,6 +347,16 @@ def main(config=None, log_file=None):
     config.log_file = effective_log_file
 
     setup_logging(config.log, str(effective_log_file))
+
+    # Keep the per-session log used for isolation, while mirroring it to the
+    # WebUI terminal so the browser can show progress in real time.
+    ui_log_file = getattr(config, "ui_log_file", None)
+    if ui_log_file and Path(ui_log_file) != effective_log_file:
+        ui_handler = logging.FileHandler(ui_log_file, encoding="utf-8")
+        ui_handler.setFormatter(logging.Formatter(
+            "%(asctime)s - [Worker-%(process)d] - %(filename)s:%(lineno)d - %(funcName)s - %(levelname)s - %(message)s"
+        ))
+        logging.getLogger().addHandler(ui_handler)
 
     # Ensure FFmpeg is available for audio conversion (pydub)
     ensure_ffmpeg_available()

@@ -1492,6 +1492,9 @@ def launch_audiobook_generator(config, session_key="default"):
     worker_context = multiprocessing.get_context("spawn")
     session_log = generate_unique_log_path(f"EtA_{config.tts}_{session_key[:12]}")
     session_log.touch()
+    # The unique file remains the source of truth for this browser session;
+    # main.py also mirrors it to the visible WebUI log.
+    config.ui_log_file = str(webui_log_file.absolute()) if webui_log_file else None
     running_processes[session_key] = worker_context.Process(
         target=main, args=(config, str(session_log.absolute()))
     )
