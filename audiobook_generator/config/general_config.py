@@ -77,6 +77,22 @@ class GeneralConfig:
         self.coqui_mp3_quality = getattr(args, 'coqui_mp3_quality', 0)           # 0 (mejor) a 9 (peor)
         self.coqui_enable_limiter = getattr(args, 'coqui_enable_limiter', True)  # Limiter para mejor calidad
         self.coqui_normalize_volume = getattr(args, 'coqui_normalize_volume', True) # Normalización de volumen
+
+        # Chatterbox Multilingual V3 specific arguments.  Chatterbox lives in
+        # its own virtual environment because its PyTorch stack is not
+        # compatible with the application's Coqui environment.
+        self.chatterbox_model = getattr(args, 'chatterbox_model', 'v3')
+        self.chatterbox_language = getattr(args, 'chatterbox_language', 'es')
+        self.chatterbox_reference_audio = getattr(args, 'chatterbox_reference_audio', None)
+        self.chatterbox_device = getattr(args, 'chatterbox_device', 'cuda')
+        self.chatterbox_exaggeration = getattr(args, 'chatterbox_exaggeration', 0.5)
+        self.chatterbox_cfg_weight = getattr(args, 'chatterbox_cfg_weight', 0.5)
+        self.chatterbox_temperature = getattr(args, 'chatterbox_temperature', 0.8)
+        self.chatterbox_repetition_penalty = getattr(args, 'chatterbox_repetition_penalty', 1.2)
+        self.chatterbox_min_p = getattr(args, 'chatterbox_min_p', 0.05)
+        self.chatterbox_top_p = getattr(args, 'chatterbox_top_p', 1.0)
+        self.chatterbox_break_duration = getattr(args, 'chatterbox_break_duration', 1250)
+        self.chatterbox_max_chars = getattr(args, 'chatterbox_max_chars', 900)
         
         # === CONFIGURACIÓN DE CALIDAD DE AUDIO PIPER ===
         self.piper_sample_rate = getattr(args, 'piper_sample_rate', 22050)        # 16000, 22050, 44100 Hz

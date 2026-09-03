@@ -265,6 +265,31 @@ def handle_args():
         type=float,
         help="Noise scale for word duration variability",
     )
+    chatterbox_group = parser.add_argument_group(title="chatterbox multilingual specific")
+    chatterbox_group.add_argument(
+        "--chatterbox_model", choices=["v3", "v2"], default="v3",
+        help="Chatterbox Multilingual checkpoint (default: v3)",
+    )
+    chatterbox_group.add_argument(
+        "--chatterbox_language", default="es",
+        help="Chatterbox language code, e.g. es, en, fr (default: es)",
+    )
+    chatterbox_group.add_argument(
+        "--chatterbox_reference_audio",
+        help="WAV/MP3/FLAC reference clip used for voice cloning",
+    )
+    chatterbox_group.add_argument(
+        "--chatterbox_device", choices=["cpu", "cuda"], default="cuda",
+        help="Chatterbox device (default: cuda; uses its isolated environment)",
+    )
+    chatterbox_group.add_argument("--chatterbox_exaggeration", type=float, default=0.5)
+    chatterbox_group.add_argument("--chatterbox_cfg_weight", type=float, default=0.5)
+    chatterbox_group.add_argument("--chatterbox_temperature", type=float, default=0.8)
+    chatterbox_group.add_argument("--chatterbox_repetition_penalty", type=float, default=1.2)
+    chatterbox_group.add_argument("--chatterbox_min_p", type=float, default=0.05)
+    chatterbox_group.add_argument("--chatterbox_top_p", type=float, default=1.0)
+    chatterbox_group.add_argument("--chatterbox_break_duration", type=int, default=1250)
+    chatterbox_group.add_argument("--chatterbox_max_chars", type=int, default=900)
     kokoro_tts_group = parser.add_argument_group(title="kokoro specific")
     kokoro_tts_group.add_argument(
         "--kokoro_base_url",

@@ -1,6 +1,6 @@
 import multiprocessing
 from multiprocessing import Process
-from typing import Optional
+from typing import Dict, Optional
 import json
 import os
 import requests
@@ -23,6 +23,10 @@ from audiobook_generator.tts_providers.openai_tts_provider import get_openai_sup
 from audiobook_generator.tts_providers.piper_tts_provider import get_piper_supported_languages, \
     get_piper_supported_voices, get_piper_supported_qualities, get_piper_supported_speakers
 from audiobook_generator.tts_providers.kokoro_tts_provider import get_kokoro_supported_voices
+from audiobook_generator.tts_providers.chatterbox_tts_provider import (
+    get_chatterbox_supported_languages,
+    get_chatterbox_supported_models,
+)
 from audiobook_generator.tts_providers.elevenlabs_tts_provider import (
     fetch_elevenlabs_voices,
     filter_elevenlabs_voices,
@@ -67,12 +71,11 @@ from audiobook_generator.utils.log_handler import generate_unique_log_path
 from main import main
 
 selected_tts = "Edge"
-running_process: Optional[Process] = None
+running_processes: Dict[str, Process] = {}
 webui_log_file = None
 
 def on_tab_change(evt: gr.SelectData):
     print(f"{evt.value} tab selected")
-    global selected_tts
     # Mapear los nombres de las pestañas a los nombres internos
     tab_mapping = {
         "OpenAI": "OpenAI",
@@ -83,9 +86,12 @@ def on_tab_change(evt: gr.SelectData):
         "Coqui": "Coqui",
         "Kokoro": "Kokoro",
         "ElevenLabs": "ElevenLabs",
+        "Chatterbox V3": "Chatterbox",
+        "Chatterbox": "Chatterbox",
     }
-    selected_tts = tab_mapping.get(evt.value, evt.value)
-    print(f"Selected TTS provider: {selected_tts}")
+    selected = tab_mapping.get(evt.value, evt.value)
+    print(f"Selected TTS provider: {selected}")
+    return selected
 
 def get_azure_voices_by_language(language):
     voices_list = [voice for voice in get_azure_supported_voices() if voice.startswith(language)]
@@ -1252,7 +1258,7 @@ def preview_voice_combination_with_text(voice_spec: str, language_code: str, cus
         return False, f"❌ Error en preview: {str(e)}", ""
 
 
-def process_ui_form(input_file, output_dir, worker_count, log_level, output_text, preview,
+def process_ui_form(input_file, output_dir, worker_count, log_level, output_text, preview, selected_provider,
                     search_and_replace_file, title_mode, new_line_mode, chapter_start, chapter_end, remove_endnotes, remove_reference_numbers,
                     model, voices, speed, openai_output_format, instructions,
                     # OpenAI audio quality inputs
@@ -1282,7 +1288,13 @@ def process_ui_form(input_file, output_dir, worker_count, log_level, output_text
                     piper_executable_path=None, piper_docker_image=None, piper_language=None, piper_voice=None, piper_quality=None, piper_speaker=None,
                     piper_noise_scale=None, piper_noise_w_scale=None, piper_length_scale=None, piper_sentence_silence=None, piper_device=None,
                     # Piper audio quality inputs
-                    piper_sample_rate=None, piper_audio_bitrate=None, piper_audio_channels=None, piper_wav_bit_depth=None, piper_mp3_quality=None, piper_enable_limiter=None, piper_normalize_volume=None):
+                    piper_sample_rate=None, piper_audio_bitrate=None, piper_audio_channels=None, piper_wav_bit_depth=None, piper_mp3_quality=None, piper_enable_limiter=None, piper_normalize_volume=None,
+                    chatterbox_model=None, chatterbox_language=None, chatterbox_reference_audio=None,
+                    chatterbox_device=None, chatterbox_exaggeration=0.5, chatterbox_cfg_weight=0.5,
+                    chatterbox_temperature=0.8, chatterbox_repetition_penalty=1.2, chatterbox_min_p=0.05,
+                    chatterbox_top_p=1.0, chatterbox_break_duration=1250, chatterbox_max_chars=900,
+                    chatterbox_output_format="mp3",
+                    request: gr.Request = None):
 
     config = GeneralConfig(None)
     config.input_file = input_file.name if hasattr(input_file, 'name') else input_file
@@ -1301,7 +1313,7 @@ def process_ui_form(input_file, output_dir, worker_count, log_level, output_text
     config.remove_reference_numbers = remove_reference_numbers
     config.search_and_replace_file = search_and_replace_file.name if hasattr(search_and_replace_file, 'name') else search_and_replace_file
 
-    global selected_tts
+    selected_tts = selected_provider or "Edge"
     if selected_tts == "OpenAI":
         config.tts = "openai"
         config.output_format = openai_output_format
@@ -1437,15 +1449,40 @@ def process_ui_form(input_file, output_dir, worker_count, log_level, output_text
         config.coqui_wav_bit_depth = int(coqui_wav_bit_depth)
         config.coqui_mp3_quality = coqui_mp3_quality
         config.coqui_enable_limiter = coqui_enable_limiter
+    elif selected_tts == "Chatterbox":
+        config.tts = "chatterbox"
+        config.output_format = chatterbox_output_format or "mp3"
+        config.chatterbox_model = chatterbox_model or "v3"
+        config.chatterbox_language = chatterbox_language or "es"
+        config.chatterbox_reference_audio = (
+            chatterbox_reference_audio.name
+            if hasattr(chatterbox_reference_audio, "name")
+            else chatterbox_reference_audio
+        )
+        config.chatterbox_device = chatterbox_device or "cuda"
+        config.chatterbox_exaggeration = float(chatterbox_exaggeration)
+        config.chatterbox_cfg_weight = float(chatterbox_cfg_weight)
+        config.chatterbox_temperature = float(chatterbox_temperature)
+        config.chatterbox_repetition_penalty = float(chatterbox_repetition_penalty)
+        config.chatterbox_min_p = float(chatterbox_min_p)
+        config.chatterbox_top_p = float(chatterbox_top_p)
+        config.chatterbox_break_duration = int(chatterbox_break_duration)
+        config.chatterbox_max_chars = int(chatterbox_max_chars)
     else:
         raise ValueError("Unsupported TTS provider selected")
 
-    launch_audiobook_generator(config)
+    launch_audiobook_generator(config, _get_session_key(request))
 
 
-def launch_audiobook_generator(config):
-    global running_process
-    if running_process and running_process.is_alive():
+def _get_session_key(request=None):
+    """Return Gradio's browser session id, keeping each browser job isolated."""
+    session_hash = getattr(request, "session_hash", None)
+    return str(session_hash or "default")
+
+
+def launch_audiobook_generator(config, session_key="default"):
+    existing = running_processes.get(session_key)
+    if existing and existing.is_alive():
         print("Audiobook generator already running")
         return
 
@@ -1453,21 +1490,29 @@ def launch_audiobook_generator(config):
     # Linux fork method can deadlock while initializing the GPU model because
     # the WebUI imports the TTS modules before launching this worker.
     worker_context = multiprocessing.get_context("spawn")
-    running_process = worker_context.Process(target=main, args=(config, str(webui_log_file.absolute())))
-    running_process.start()
+    session_log = generate_unique_log_path(f"EtA_{config.tts}_{session_key[:12]}")
+    session_log.touch()
+    running_processes[session_key] = worker_context.Process(
+        target=main, args=(config, str(session_log.absolute()))
+    )
+    running_processes[session_key].start()
 
 
-def terminate_audiobook_generator():
-    global running_process
-    if running_process and running_process.is_alive():
-        running_process.terminate()
-        running_process = None
+def terminate_audiobook_generator(request: gr.Request = None):
+    session_key = _get_session_key(request)
+    process = running_processes.get(session_key)
+    if process and process.is_alive():
+        process.terminate()
+        running_processes.pop(session_key, None)
         print("Audiobook generator terminated manually")
 
 def host_ui(config):
     default_output_dir = os.path.join("audiobook_output", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
     print(f"Default audiobook output directory: {default_output_dir}")
     with gr.Blocks(analytics_enabled=False, title="Epub to Audiobook Converter") as ui:
+        # Gradio State is scoped to each browser session.  A global provider
+        # variable made two browser tabs overwrite one another.
+        tts_provider_state = gr.State("Edge")
         with gr.Row(equal_height=True):
             with gr.Column():
                 input_file = gr.File(label="Select the book file to process", file_types=[".epub"], 
@@ -1575,9 +1620,9 @@ def host_ui(config):
                             info="Volumen consistente"
                         )
                 
-                open_ai_tab.select(on_tab_change, inputs=None, outputs=None)
+                open_ai_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
             with gr.Tab("ElevenLabs", id="elevenlabs_tab_id") as elevenlabs_tab:
-                elevenlabs_tab.select(on_tab_change, inputs=None, outputs=None)
+                elevenlabs_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
                 gr.Markdown(
                     "**ElevenLabs TTS** — Voz online con detección de idioma y acento según la voz. "
                     "Necesitas una API key de ElevenLabs; el consumo depende de tu cuota gratuita."
@@ -1708,7 +1753,7 @@ def host_ui(config):
                         inputs=azure_language,
                         outputs=azure_voice,
                     )
-                azure_tab.select(on_tab_change, inputs=None, outputs=None)
+                azure_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
 
             with gr.Tab("Edge", id="edge_tab_id") as edge_tab:
                 with gr.Row(equal_height=True):
@@ -1732,10 +1777,10 @@ def host_ui(config):
                         inputs=edge_language,
                         outputs=edge_voice,
                     )
-                edge_tab.select(on_tab_change, inputs=None, outputs=None)
+                edge_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
 
             with gr.Tab("Piper", id="piper_tab_id") as piper_tab:
-                piper_tab.select(on_tab_change, inputs=None, outputs=None)
+                piper_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
                 with gr.Row(equal_height=True):
                     piper_device = gr.Dropdown(["cpu", "cuda"], label="Device", value="cpu", interactive=True, info="Select device for Piper (cpu/gpu)")
                     with gr.Column():
@@ -1859,7 +1904,7 @@ def host_ui(config):
                         )
 
             with gr.Tab("Coqui TTS", id="coqui_tab_id") as coqui_tab:
-                coqui_tab.select(on_tab_change, inputs=None, outputs=None)
+                coqui_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
                 gr.Markdown("**🐸 Coqui TTS** - Síntesis de voz neuronal avanzada con soporte completo para español. Incluye XTTS-v2 para clonación de voz y modelos específicos de español.")
                 
                 # Selección de modelo y configuración básica
@@ -2122,8 +2167,51 @@ def host_ui(config):
                     outputs=[piper_sample_rate, piper_audio_bitrate, piper_audio_channels, piper_wav_bit_depth, piper_mp3_quality, piper_enable_limiter, piper_normalize_volume]
                 )
                 
+            with gr.Tab("Chatterbox V3", id="chatterbox_tab_id") as chatterbox_tab:
+                chatterbox_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
+                gr.Markdown(
+                    "**🗣️ Chatterbox Multilingual V3** — motor local separado, con CUDA y clonación "
+                    "por audio de referencia. No tiene un catálogo de voces fijas: cada archivo de referencia "
+                    "es la voz que se clona. El modelo soporta 23 idiomas."
+                )
+                with gr.Row(equal_height=True):
+                    chatterbox_model = gr.Dropdown(
+                        get_chatterbox_supported_models(), value="v3", label="Modelo", interactive=True,
+                        info="V3 es el modelo recomendado; V2 queda disponible como alternativa."
+                    )
+                    chatterbox_language = gr.Dropdown(
+                        choices=[(f"{name} ({code})", code) for code, name in get_chatterbox_supported_languages()],
+                        value="es", label="Idioma de síntesis", interactive=True
+                    )
+                    chatterbox_device = gr.Dropdown(
+                        ["cuda", "cpu"], value="cuda", label="Dispositivo", interactive=True,
+                        info="CUDA usa la RTX 3050 Ti; con 4 GB no conviene ejecutar dos modelos locales a la vez."
+                    )
+                    chatterbox_output_format = gr.Dropdown(
+                        ["mp3", "wav"], value="mp3", label="Formato", interactive=True
+                    )
+                chatterbox_reference_audio = gr.File(
+                    label="🎙️ Audio de referencia para clonar (WAV/MP3/FLAC, 5–30 s)",
+                    file_types=[".wav", ".mp3", ".flac"], file_count="single", interactive=True
+                )
+                with gr.Row(equal_height=True):
+                    chatterbox_exaggeration = gr.Slider(0, 1, value=0.5, step=0.05, label="Expresividad", info="0.5 recomendado para audiolibros")
+                    chatterbox_cfg_weight = gr.Slider(0, 1, value=0.5, step=0.05, label="Fidelidad de voz", info="0.5 equilibrado; 0.3 más natural/rápido")
+                    chatterbox_temperature = gr.Slider(0.1, 1.5, value=0.8, step=0.05, label="Temperatura")
+                with gr.Row(equal_height=True):
+                    chatterbox_repetition_penalty = gr.Slider(1, 2, value=1.2, step=0.05, label="Anti-repetición")
+                    chatterbox_min_p = gr.Slider(0, 1, value=0.05, step=0.01, label="Min P")
+                    chatterbox_top_p = gr.Slider(0.1, 1, value=1.0, step=0.05, label="Top P")
+                with gr.Row(equal_height=True):
+                    chatterbox_break_duration = gr.Slider(0, 3000, value=1250, step=50, label="Pausa entre párrafos (ms)")
+                    chatterbox_max_chars = gr.Slider(400, 1400, value=900, step=50, label="Máximo de caracteres por fragmento")
+                gr.Markdown(
+                    "Para una lectura estable, deja los valores recomendados y usa un clip limpio del narrador. "
+                    "Los capítulos se dividen por párrafos y frases, nunca por una palabra aislada."
+                )
+
             with gr.Tab("Kokoro", id="kokoro_tab_id") as kokoro_tab:
-                kokoro_tab.select(on_tab_change, inputs=None, outputs=None)
+                kokoro_tab.select(on_tab_change, inputs=None, outputs=tts_provider_state)
                 gr.Markdown("**Kokoro TTS** - OpenAI-compatible local server with multi-language support. Configure custom host/port if needed.")
                 
                 with gr.Row(equal_height=True):
@@ -2629,7 +2717,7 @@ def host_ui(config):
             gr.Button("Start", variant="primary").click(
                 fn=process_ui_form,
                 inputs=[
-                    input_file, output_dir, worker_count, log_level, output_text, preview,
+                    input_file, output_dir, worker_count, log_level, output_text, preview, tts_provider_state,
                     search_and_replace_file, title_mode, new_line_mode, chapter_start, chapter_end, remove_endnotes, remove_reference_numbers,
                     model, voices, speed, openai_output_format, instructions,
                     # OpenAI audio quality inputs
@@ -2659,7 +2747,12 @@ def host_ui(config):
                     piper_executable_path, piper_docker_image, piper_language, piper_voice, piper_quality, piper_speaker,
                     piper_noise_scale, piper_noise_w_scale, piper_length_scale, piper_sentence_silence, piper_device,
                     # Piper audio quality inputs
-                    piper_sample_rate, piper_audio_bitrate, piper_audio_channels, piper_wav_bit_depth, piper_mp3_quality, piper_enable_limiter, piper_normalize_volume
+                    piper_sample_rate, piper_audio_bitrate, piper_audio_channels, piper_wav_bit_depth, piper_mp3_quality, piper_enable_limiter, piper_normalize_volume,
+                    # Chatterbox Multilingual V3
+                    chatterbox_model, chatterbox_language, chatterbox_reference_audio, chatterbox_device,
+                    chatterbox_exaggeration, chatterbox_cfg_weight, chatterbox_temperature,
+                    chatterbox_repetition_penalty, chatterbox_min_p, chatterbox_top_p,
+                    chatterbox_break_duration, chatterbox_max_chars, chatterbox_output_format
                 ],
                 outputs=None)
         with gr.Row():

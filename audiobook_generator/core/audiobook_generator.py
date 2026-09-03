@@ -30,6 +30,7 @@ class AudiobookGenerator:
     def __init__(self, config: GeneralConfig):
         self.config = config
         self._coqui_provider = None
+        self._chatterbox_provider = None
 
     def __str__(self) -> str:
         return f"{self.config}"
@@ -45,6 +46,10 @@ class AudiobookGenerator:
                 if self._coqui_provider is None:
                     self._coqui_provider = get_tts_provider(self.config)
                 tts_provider = self._coqui_provider
+            elif self.config.tts == "chatterbox":
+                if self._chatterbox_provider is None:
+                    self._chatterbox_provider = get_tts_provider(self.config)
+                tts_provider = self._chatterbox_provider
             else:
                 tts_provider = get_tts_provider(self.config)
 
@@ -87,6 +92,8 @@ class AudiobookGenerator:
             tts_provider = get_tts_provider(self.config)
             if self.config.tts == "coqui":
                 self._coqui_provider = tts_provider
+            elif self.config.tts == "chatterbox":
+                self._chatterbox_provider = tts_provider
 
             # The WebUI starts chapter workers in separate processes. Resolve the
             # user-provided output directory before spawning them so relative
@@ -154,8 +161,8 @@ class AudiobookGenerator:
             # CUDA-backed Coqui models cannot safely be loaded from forked
             # workers. Process Coqui chapters sequentially in this process;
             # cloud providers retain the existing parallel path.
-            if self.config.tts == "coqui":
-                logger.info("Coqui TTS selected: processing chapters sequentially to keep CUDA stable")
+            if self.config.tts in {"coqui", "chatterbox"}:
+                logger.info("Local GPU TTS selected: processing chapters sequentially to keep model state stable")
                 results = [self.process_chapter_wrapper(task) for task in tasks]
             else:
                 with multiprocessing.Pool(
@@ -184,4 +191,8 @@ class AudiobookGenerator:
         except Exception as e:
             logger.exception(f"Error during audiobook generation: {e}")
         finally:
+            for provider in (self._coqui_provider, self._chatterbox_provider):
+                close = getattr(provider, "close", None)
+                if close:
+                    close()
             logger.debug("AudiobookGenerator.run() method finished.")

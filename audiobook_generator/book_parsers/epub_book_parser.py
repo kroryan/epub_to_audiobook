@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 
 
 class EpubBookParser(BaseBookParser):
+    MIN_FRAGMENT_CHARS = 300
+    CONTINUATION_WORDS = {
+        "a", "al", "con", "contra", "de", "del", "desde", "e", "el", "en",
+        "entre", "hacia", "hasta", "la", "las", "lo", "los", "ni", "o", "para",
+        "por", "que", "sin", "sobre", "su", "un", "una", "y",
+    }
+
     def __init__(self, config: GeneralConfig):
         super().__init__(config)
         self.book = epub.read_epub(self.config.input_file, {"ignore_ncx": True})
@@ -112,7 +119,114 @@ class EpubBookParser(BaseBookParser):
 
             chapters.append((title, cleaned_text))
             soup.decompose()
+        chapters = self._consolidate_fragmented_documents(chapters)
+        logger.info(
+            "EPUB chapter consolidation: %s readable chapters after joining short document fragments",
+            len(chapters),
+        )
         return chapters
+
+    @classmethod
+    def _ends_sentence_or_heading(cls, text: str) -> bool:
+        """Detect a safe boundary between two EPUB documents.
+
+        EPUBs produced from PDFs/e-books often split in the middle of a
+        sentence. A final colon/semicolon is also treated as a boundary so
+        headings such as ``ACTO UNO:`` do not swallow the following section.
+        """
+        stripped = (text or "").rstrip()
+        if not stripped:
+            return True
+        return stripped[-1] in ".!?…。！？:;)]}»”’"
+
+    @classmethod
+    def _starts_continuation(cls, text: str, previous_text: str) -> bool:
+        stripped = (text or "").lstrip()
+        if not stripped:
+            return True
+        if stripped[0] in ",.;:!?)]}»”’":
+            return True
+        first_word = re.match(r"([\wÁÉÍÓÚÜÑáéíóúüñ]+)", stripped)
+        if first_word and first_word.group(1)[0].islower():
+            return True
+        previous_words = re.findall(r"[\wÁÉÍÓÚÜÑáéíóúüñ]+", previous_text or "")
+        return bool(previous_words and previous_words[-1].lower() in cls.CONTINUATION_WORDS)
+
+    @staticmethod
+    def _join_fragment(left: str, right: str) -> str:
+        left = (left or "").rstrip()
+        right = (right or "").lstrip()
+        if not left:
+            return right
+        if not right:
+            return left
+        return f"{left} {right}"
+
+    @classmethod
+    def _consolidate_fragmented_documents(
+        cls, chapters: List[Tuple[str, str]]
+    ) -> List[Tuple[str, str]]:
+        """Join tiny EPUB spine documents that are page/phrase fragments.
+
+        A document boundary is not necessarily a chapter boundary. This is
+        especially common in Calibre-generated EPUBs, where a page break can
+        leave words such as ``los resultados del`` in separate XHTML files.
+        Short runs are attached to the preceding unfinished sentence or to the
+        following document when they look like a heading/lead-in.
+        """
+        if not chapters:
+            return []
+
+        consolidated: List[Tuple[str, str]] = []
+        index = 0
+        while index < len(chapters):
+            title, text = chapters[index]
+            if len(text.strip()) >= cls.MIN_FRAGMENT_CHARS:
+                consolidated.append((title, text))
+                index += 1
+                continue
+
+            run_start = index
+            fragments = []
+            while index < len(chapters) and len(chapters[index][1].strip()) < cls.MIN_FRAGMENT_CHARS:
+                fragments.append(chapters[index][1])
+                index += 1
+            fragment_text = " ".join(part.strip() for part in fragments if part.strip())
+
+            if not fragment_text:
+                continue
+
+            if consolidated and not cls._ends_sentence_or_heading(consolidated[-1][1]):
+                previous_title, previous_text = consolidated[-1]
+                previous_text = cls._join_fragment(previous_text, fragment_text)
+
+                # If the next document starts with a lowercase word or the
+                # previous fragment ends in a connector such as "del", it is
+                # the continuation of the same sentence too.
+                if index < len(chapters) and cls._starts_continuation(
+                    chapters[index][1], previous_text
+                ):
+                    previous_text = cls._join_fragment(previous_text, chapters[index][1])
+                    index += 1
+                consolidated[-1] = (previous_title, previous_text)
+            elif index < len(chapters):
+                next_title, next_text = chapters[index]
+                consolidated.append((next_title, cls._join_fragment(fragment_text, next_text)))
+                index += 1
+            elif consolidated:
+                previous_title, previous_text = consolidated[-1]
+                consolidated[-1] = (previous_title, cls._join_fragment(previous_text, fragment_text))
+            else:
+                consolidated.append((title, fragment_text))
+
+            logger.debug(
+                "Joined EPUB fragment documents %s-%s (%s chars)",
+                run_start + 1,
+                index,
+                len(fragment_text),
+            )
+
+        return consolidated
 
     def get_search_and_replaces(self):
         search_and_replaces = []
