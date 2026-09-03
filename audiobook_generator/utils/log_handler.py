@@ -12,7 +12,7 @@ def get_formatter(is_worker):
             "%(asctime)s - %(filename)s:%(lineno)d - %(funcName)s - %(levelname)s - %(message)s"
         )
 
-def setup_logging(log_level, log_file=None, is_worker=False):
+def setup_logging(log_level, log_file=None, is_worker=False, mirror_log_file=None):
     formatter = get_formatter(is_worker)
 
     root_logger = logging.getLogger()
@@ -33,6 +33,15 @@ def setup_logging(log_level, log_file=None, is_worker=False):
     file_handler = logging.FileHandler(log_file, encoding='utf-8')
     file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
+
+    # Pool workers rebuild the logging handlers in their initializer. Keep
+    # their private session log, but also mirror messages to the WebUI log so
+    # progress remains visible in the browser.
+    if mirror_log_file and Path(mirror_log_file) != Path(log_file):
+        Path(mirror_log_file).parent.mkdir(parents=True, exist_ok=True)
+        mirror_handler = logging.FileHandler(mirror_log_file, encoding='utf-8')
+        mirror_handler.setFormatter(formatter)
+        root_logger.addHandler(mirror_handler)
 
 def generate_unique_log_path(prefix: str) -> Path:
     """Generates a unique log file path with a timestamp."""

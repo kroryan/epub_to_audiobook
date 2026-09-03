@@ -168,7 +168,7 @@ class AudiobookGenerator:
                 with multiprocessing.Pool(
                     processes=self.config.worker_count,
                     initializer=setup_logging,
-                    initargs=(self.config.log, self.config.log_file, True)
+                    initargs=(self.config.log, self.config.log_file, True, self.config.ui_log_file)
                 ) as pool:
                     results = list(pool.imap_unordered(self.process_chapter_wrapper, tasks))
 
