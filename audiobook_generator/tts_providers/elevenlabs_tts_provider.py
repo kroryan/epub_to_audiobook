@@ -213,6 +213,38 @@ def get_elevenlabs_voice_choices(
     return [(format_voice_choice(voice), voice.get("voice_id")) for voice in filtered]
 
 
+def get_elevenlabs_voice(voices: Iterable[Dict], voice_id: str) -> Optional[Dict]:
+    """Find one voice in the explorer cache without another API request."""
+    for voice in voices or []:
+        if str(voice.get("voice_id", "")) == str(voice_id or ""):
+            return voice
+    return None
+
+
+def get_elevenlabs_voice_preview(voices: Iterable[Dict], voice_id: str):
+    """Return the provider-supplied preview URL for a selected voice."""
+    voice = get_elevenlabs_voice(voices, voice_id)
+    if not voice:
+        return None
+    return voice.get("preview_url") or voice.get("preview_audio_url")
+
+
+def format_elevenlabs_voice_details(voices: Iterable[Dict], voice_id: str) -> str:
+    voice = get_elevenlabs_voice(voices, voice_id)
+    if not voice:
+        return "Selecciona una voz para ver sus datos y escuchar su demo."
+    labels = _voice_labels(voice)
+    languages = ", ".join(voice_language_codes(voice)) or "No indicado"
+    accents = ", ".join(voice_accents(voice)) or "No indicado"
+    preview = get_elevenlabs_voice_preview(voices, voice_id)
+    demo_text = "Demo disponible" if preview else "Esta voz no tiene demo publicada"
+    return (
+        f"**{voice.get('name', voice_id)}**  \n"
+        f"ID: `{voice_id}` · Idiomas: `{languages}` · Acentos: `{accents}`  \n"
+        f"Género/uso: `{labels.get('gender', 'no indicado')}` / `{labels.get('use_case', 'no indicado')}` · {demo_text}"
+    )
+
+
 class ElevenLabsTTSProvider(BaseTTSProvider):
     def __init__(self, config: GeneralConfig):
         config.model_name = config.model_name or DEFAULT_MODEL

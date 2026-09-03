@@ -25,10 +25,13 @@ from audiobook_generator.tts_providers.piper_tts_provider import get_piper_suppo
 from audiobook_generator.tts_providers.kokoro_tts_provider import get_kokoro_supported_voices
 from audiobook_generator.tts_providers.elevenlabs_tts_provider import (
     fetch_elevenlabs_voices,
+    filter_elevenlabs_voices,
+    format_elevenlabs_voice_details,
     get_elevenlabs_accent_choices,
     get_elevenlabs_language_choices,
     get_elevenlabs_supported_models,
     get_elevenlabs_supported_output_formats,
+    get_elevenlabs_voice_preview,
     get_elevenlabs_voice_choices,
 )
 try:
@@ -388,11 +391,13 @@ def refresh_elevenlabs_voice_explorer(api_key):
     try:
         voices = fetch_elevenlabs_voices(api_key)
         language_choices = get_elevenlabs_language_choices(voices)
-        accent_choices = get_elevenlabs_accent_choices(voices, "es")
-        voice_choices = get_elevenlabs_voice_choices(voices, "es")
+        # Start with the complete catalogue visible. The user can narrow it
+        # to Spanish/accent afterwards instead of silently seeing one voice.
+        accent_choices = get_elevenlabs_accent_choices(voices, "")
+        voice_choices = get_elevenlabs_voice_choices(voices, "", "", "")
         return (
             voices,
-            gr.Dropdown(choices=language_choices, value="es", interactive=True),
+            gr.Dropdown(choices=language_choices, value="", interactive=True),
             gr.Dropdown(choices=accent_choices, value="", interactive=True),
             gr.Dropdown(
                 choices=voice_choices,
@@ -400,7 +405,7 @@ def refresh_elevenlabs_voice_explorer(api_key):
                 interactive=True,
                 allow_custom_value=True,
             ),
-            f"✅ {len(voices)} voces cargadas. Se muestran las voces compatibles con español.",
+            f"✅ {len(voices)} voces accesibles cargadas. El catálogo completo de Voice Library puede requerir permisos/plan adicionales.",
         )
     except Exception as exc:
         logger_message = f"❌ No se pudieron cargar las voces de ElevenLabs: {exc}"
@@ -417,29 +422,47 @@ def filter_elevenlabs_voice_explorer(voices, language_code="", accent="", search
     """Refresh accent and voice choices without another API request."""
     accent_choices = get_elevenlabs_accent_choices(voices or [], language_code or "")
     voice_choices = get_elevenlabs_voice_choices(
-        voices or [], language_code or "", accent or "", search or ""
+        voices or [], language_code or "", "", search or ""
     )
+    filtered = filter_elevenlabs_voices(voices or [], language_code or "", "", search or "")
     return (
-        gr.Dropdown(choices=accent_choices, value=accent or "", interactive=True),
+        # A language change always resets the accent. Keeping the old accent
+        # could incorrectly collapse the list to zero or one voices.
+        gr.Dropdown(choices=accent_choices, value="", interactive=True),
         gr.Dropdown(
             choices=voice_choices,
             value=voice_choices[0][1] if voice_choices else None,
             interactive=True,
             allow_custom_value=True,
         ),
+        f"🔎 {len(filtered)} voces encontradas con estos filtros.",
     )
 
 
 def filter_elevenlabs_voices_only(voices, language_code="", accent="", search=""):
+    filtered = filter_elevenlabs_voices(
+        voices or [], language_code or "", accent or "", search or ""
+    )
     voice_choices = get_elevenlabs_voice_choices(
         voices or [], language_code or "", accent or "", search or ""
     )
-    return gr.Dropdown(
-        choices=voice_choices,
-        value=voice_choices[0][1] if voice_choices else None,
-        interactive=True,
-        allow_custom_value=True,
+    return (
+        gr.Dropdown(
+            choices=voice_choices,
+            value=voice_choices[0][1] if voice_choices else None,
+            interactive=True,
+            allow_custom_value=True,
+        ),
+        f"🔎 {len(filtered)} voces encontradas con estos filtros.",
     )
+
+
+def preview_elevenlabs_voice(voices, voice_id):
+    preview_url = get_elevenlabs_voice_preview(voices or [], voice_id)
+    details = format_elevenlabs_voice_details(voices or [], voice_id)
+    if not preview_url:
+        return None, details + "  \nNo hay una demo pública disponible para esta voz."
+    return preview_url, details
 
 def update_kokoro_voices_by_language(language_code, base_url):
     """Update voice dropdown when language changes."""
@@ -1567,8 +1590,8 @@ def host_ui(config):
                         info="Multilingual v2 es la opción estable para narración larga en español."
                     )
                     elevenlabs_language = gr.Dropdown(
-                        choices=[("Español (es)", "es"), ("Todos los idiomas", "")],
-                        value="es",
+                        choices=[("Todos los idiomas", ""), ("Español (es)", "es")],
+                        value="",
                         label="Idioma",
                         interactive=True,
                         info="Filtra las voces verificadas para ese idioma."
@@ -1601,6 +1624,17 @@ def host_ui(config):
                         interactive=False
                     )
                 with gr.Row(equal_height=True):
+                    elevenlabs_preview_button = gr.Button("▶️ Escuchar demo de la voz", variant="secondary")
+                    elevenlabs_preview_audio = gr.Audio(
+                        label="Demo de voz seleccionada",
+                        type="filepath",
+                        interactive=False,
+                        autoplay=False,
+                    )
+                elevenlabs_voice_details = gr.Markdown(
+                    "Selecciona una voz y pulsa **Escuchar demo** para comprobarla antes de generar el libro."
+                )
+                with gr.Row(equal_height=True):
                     elevenlabs_speed = gr.Slider(
                         minimum=0.5, maximum=2.0, step=0.05, value=1.0,
                         label="Velocidad", info="1.0 es velocidad normal."
@@ -1621,17 +1655,27 @@ def host_ui(config):
                 elevenlabs_language.change(
                     fn=filter_elevenlabs_voice_explorer,
                     inputs=[elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent, elevenlabs_voice_search],
-                    outputs=[elevenlabs_accent, elevenlabs_voice],
+                    outputs=[elevenlabs_accent, elevenlabs_voice, elevenlabs_status],
                 )
                 elevenlabs_accent.change(
                     fn=filter_elevenlabs_voices_only,
                     inputs=[elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent, elevenlabs_voice_search],
-                    outputs=elevenlabs_voice,
+                    outputs=[elevenlabs_voice, elevenlabs_status],
                 )
                 elevenlabs_voice_search.change(
                     fn=filter_elevenlabs_voices_only,
                     inputs=[elevenlabs_voices_state, elevenlabs_language, elevenlabs_accent, elevenlabs_voice_search],
-                    outputs=elevenlabs_voice,
+                    outputs=[elevenlabs_voice, elevenlabs_status],
+                )
+                elevenlabs_voice.change(
+                    fn=preview_elevenlabs_voice,
+                    inputs=[elevenlabs_voices_state, elevenlabs_voice],
+                    outputs=[elevenlabs_preview_audio, elevenlabs_voice_details],
+                )
+                elevenlabs_preview_button.click(
+                    fn=preview_elevenlabs_voice,
+                    inputs=[elevenlabs_voices_state, elevenlabs_voice],
+                    outputs=[elevenlabs_preview_audio, elevenlabs_voice_details],
                 )
             with gr.Tab("Azure", id="azure_tab_id") as azure_tab:
                 gr.Markdown("It is expected that user configured: `MS_TTS_KEY` and `MS_TTS_REGION` in the environment variables.")
