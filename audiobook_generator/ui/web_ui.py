@@ -398,7 +398,7 @@ def refresh_elevenlabs_voice_explorer(api_key):
                 choices=voice_choices,
                 value=voice_choices[0][1] if voice_choices else None,
                 interactive=True,
-                allow_custom_value=False,
+                allow_custom_value=True,
             ),
             f"✅ {len(voices)} voces cargadas. Se muestran las voces compatibles con español.",
         )
@@ -425,7 +425,7 @@ def filter_elevenlabs_voice_explorer(voices, language_code="", accent="", search
             choices=voice_choices,
             value=voice_choices[0][1] if voice_choices else None,
             interactive=True,
-            allow_custom_value=False,
+            allow_custom_value=True,
         ),
     )
 
@@ -438,7 +438,7 @@ def filter_elevenlabs_voices_only(voices, language_code="", accent="", search=""
         choices=voice_choices,
         value=voice_choices[0][1] if voice_choices else None,
         interactive=True,
-        allow_custom_value=False,
+        allow_custom_value=True,
     )
 
 def update_kokoro_voices_by_language(language_code, base_url):
@@ -1591,8 +1591,8 @@ def host_ui(config):
                         value=None,
                         label="Voz seleccionada",
                         interactive=True,
-                        allow_custom_value=False,
-                        info="Carga las voces y selecciona una del listado."
+                        allow_custom_value=True,
+                        info="Carga las voces y selecciona una del listado; también puedes pegar un voice ID."
                     )
                     elevenlabs_output_format = gr.Dropdown(
                         choices=get_elevenlabs_supported_output_formats(),

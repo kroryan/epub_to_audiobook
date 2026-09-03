@@ -156,6 +156,16 @@ def fetch_elevenlabs_voices(api_key: Optional[str], page_size: int = 100) -> Lis
         )
         if response.status_code != 200:
             detail = response.text[:500]
+            try:
+                error_data = response.json().get("detail", {})
+                if error_data.get("code") == "missing_permissions":
+                    missing_permission = error_data.get("message", "voices_read")
+                    detail = (
+                        "La API key no tiene permiso para explorar voces "
+                        f"({missing_permission}). Crea otra key con el permiso voices_read."
+                    )
+            except (ValueError, AttributeError):
+                pass
             raise RuntimeError(
                 f"ElevenLabs no pudo listar las voces ({response.status_code}): {detail}"
             )
@@ -336,4 +346,3 @@ class ElevenLabsTTSProvider(BaseTTSProvider):
             raise ValueError("ElevenLabs no recibió texto con contenido para convertir.")
         combined.export(output_file, format="mp3", bitrate="128k")
         set_audio_tags(output_file, audio_tags)
-
