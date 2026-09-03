@@ -1,8 +1,9 @@
 import multiprocessing
-from multiprocessing import Process
-from typing import Dict, Optional
-import json
 import os
+import signal
+from multiprocessing import Process
+from typing import Dict
+import json
 import requests
 from datetime import datetime
 from pathlib import Path
@@ -1480,11 +1481,24 @@ def _get_session_key(request=None):
     return str(session_hash or "default")
 
 
+def _run_audiobook_in_process_group(config, log_file):
+    """Run one conversion in its own Unix process group.
+
+    Kokoro/Edge use a multiprocessing pool. Terminating only the parent can
+    leave a pool worker rendering audio, which made the Stop button appear to
+    do nothing. A private process group lets Stop terminate the whole job.
+    """
+    if os.name == "posix":
+        os.setsid()
+    main(config, log_file)
+
+
 def launch_audiobook_generator(config, session_key="default"):
     existing = running_processes.get(session_key)
     if existing and existing.is_alive():
         print("Audiobook generator already running")
         return
+    running_processes.pop(session_key, None)
 
     # Coqui/PyTorch CUDA must start from a fresh interpreter. The default
     # Linux fork method can deadlock while initializing the GPU model because
@@ -1496,18 +1510,38 @@ def launch_audiobook_generator(config, session_key="default"):
     # main.py also mirrors it to the visible WebUI log.
     config.ui_log_file = str(webui_log_file.absolute()) if webui_log_file else None
     running_processes[session_key] = worker_context.Process(
-        target=main, args=(config, str(session_log.absolute()))
+        target=_run_audiobook_in_process_group, args=(config, str(session_log.absolute()))
     )
     running_processes[session_key].start()
+    print(f"Audiobook generator started for session {session_key[:12]} (pid={running_processes[session_key].pid})")
 
 
 def terminate_audiobook_generator(request: gr.Request = None):
     session_key = _get_session_key(request)
     process = running_processes.get(session_key)
+    # Some older Gradio pages did not send the browser request/session hash.
+    # If there is exactly one active job, it is unambiguous and can be stopped.
+    if not process or not process.is_alive():
+        active = [(key, candidate) for key, candidate in running_processes.items() if candidate.is_alive()]
+        if len(active) == 1:
+            session_key, process = active[0]
     if process and process.is_alive():
-        process.terminate()
+        pid = process.pid
+        try:
+            if os.name == "posix" and pid:
+                os.killpg(os.getpgid(pid), signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+        process.join(timeout=8)
+        if process.is_alive():
+            process.kill()
+            process.join(timeout=3)
         running_processes.pop(session_key, None)
-        print("Audiobook generator terminated manually")
+        print(f"Audiobook generator terminated manually (pid={pid})")
+    else:
+        print(f"No active audiobook generator found for session {session_key[:12]}")
 
 def host_ui(config):
     default_output_dir = os.path.join("audiobook_output", datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
