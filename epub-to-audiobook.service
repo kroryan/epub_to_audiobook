@@ -1,0 +1,17 @@
+[Unit]
+Description=EPUB to Audiobook Web UI
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/krox/Documents/epub_to_audiobook
+Environment=COQUI_TOS_AGREED=1
+Environment=MPLCONFIGDIR=/home/krox/Documents/epub_to_audiobook/.cache/matplotlib
+ExecStart=/home/krox/Documents/epub_to_audiobook/.venv311/bin/python /home/krox/Documents/epub_to_audiobook/main_ui.py --host 127.0.0.1 --port 17862
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+
+[Install]
+WantedBy=default.target
