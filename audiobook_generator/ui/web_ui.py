@@ -1,6 +1,9 @@
 import multiprocessing
 import os
 import signal
+import shutil
+import tempfile
+import zipfile
 from multiprocessing import Process
 from typing import Dict
 import json
@@ -73,6 +76,7 @@ from main import main
 
 selected_tts = "Edge"
 running_processes: Dict[str, Process] = {}
+running_output_dirs: Dict[str, str] = {}
 webui_log_file = None
 
 def on_tab_change(evt: gr.SelectData):
@@ -1493,12 +1497,98 @@ def _run_audiobook_in_process_group(config, log_file):
     main(config, log_file)
 
 
+AUDIOBOOK_OUTPUT_ROOT = Path("audiobook_output").resolve()
+
+
+def _resolve_managed_output_dir(output_dir):
+    """Resolve a folder while keeping page-triggered file operations in output."""
+    if not output_dir or not str(output_dir).strip():
+        raise ValueError("Indica la carpeta de salida del audiolibro.")
+
+    candidate = Path(str(output_dir).strip()).expanduser().resolve()
+    if candidate == AUDIOBOOK_OUTPUT_ROOT or AUDIOBOOK_OUTPUT_ROOT not in candidate.parents:
+        raise ValueError(
+            f"Solo se pueden gestionar carpetas dentro de {AUDIOBOOK_OUTPUT_ROOT}."
+        )
+    return candidate
+
+
+def _is_output_dir_running(output_dir):
+    """Return the active session using output_dir, if any."""
+    target = str(output_dir.resolve())
+    for session_key, process in list(running_processes.items()):
+        if not process.is_alive():
+            running_processes.pop(session_key, None)
+            running_output_dirs.pop(session_key, None)
+            continue
+        if running_output_dirs.get(session_key) == target:
+            return session_key
+    return None
+
+
+def prepare_audiobook_zip(output_dir):
+    """Build a downloadable ZIP outside the source folder."""
+    try:
+        folder = _resolve_managed_output_dir(output_dir)
+        if not folder.exists() or not folder.is_dir():
+            return None, f"❌ No existe la carpeta de salida: `{folder}`"
+
+        files = [
+            path for path in folder.rglob("*")
+            if path.is_file()
+            and not any(part.startswith(".") for part in path.relative_to(folder).parts)
+            and path.suffix.lower() != ".zip"
+        ]
+        if not files:
+            return None, "❌ La carpeta no contiene archivos para comprimir."
+
+        archive = Path(tempfile.gettempdir()) / (
+            f"epub_to_audiobook_{folder.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
+        )
+        with zipfile.ZipFile(
+            archive, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
+        ) as zip_file:
+            for path in sorted(files):
+                zip_file.write(path, path.relative_to(folder))
+
+        size_mb = archive.stat().st_size / (1024 * 1024)
+        return (
+            str(archive),
+            f"✅ ZIP preparado ({len(files)} archivos, {size_mb:.1f} MiB). "
+            "Descárgalo antes de borrar la carpeta.",
+        )
+    except Exception as exc:
+        return None, f"❌ No se pudo crear el ZIP: {exc}"
+
+
+def delete_audiobook_output(output_dir, confirmation, downloaded_zip):
+    """Delete one generated folder after explicit download confirmation."""
+    try:
+        folder = _resolve_managed_output_dir(output_dir)
+        if not downloaded_zip:
+            return "❌ Marca primero `He descargado/verificado el ZIP`."
+        if str(confirmation or "").strip().upper() != "ELIMINAR":
+            return "❌ Para borrar, escribe exactamente `ELIMINAR`."
+        if _is_output_dir_running(folder):
+            return "❌ No se puede borrar mientras esa carpeta está siendo generada. Pulsa Stop y vuelve a intentarlo."
+        if not folder.exists():
+            return f"ℹ️ La carpeta ya no existe: `{folder}`"
+        if not folder.is_dir():
+            return "❌ La ruta indicada no es una carpeta."
+
+        shutil.rmtree(folder)
+        return f"✅ Carpeta eliminada: `{folder}`"
+    except Exception as exc:
+        return f"❌ No se pudo eliminar la carpeta: {exc}"
+
+
 def launch_audiobook_generator(config, session_key="default"):
     existing = running_processes.get(session_key)
     if existing and existing.is_alive():
         print("Audiobook generator already running")
         return
     running_processes.pop(session_key, None)
+    running_output_dirs.pop(session_key, None)
 
     # Coqui/PyTorch CUDA must start from a fresh interpreter. The default
     # Linux fork method can deadlock while initializing the GPU model because
@@ -1513,6 +1603,7 @@ def launch_audiobook_generator(config, session_key="default"):
         target=_run_audiobook_in_process_group, args=(config, str(session_log.absolute()))
     )
     running_processes[session_key].start()
+    running_output_dirs[session_key] = str(Path(config.output_folder).expanduser().resolve())
     print(f"Audiobook generator started for session {session_key[:12]} (pid={running_processes[session_key].pid})")
 
 
@@ -1539,6 +1630,7 @@ def terminate_audiobook_generator(request: gr.Request = None):
             process.kill()
             process.join(timeout=3)
         running_processes.pop(session_key, None)
+        running_output_dirs.pop(session_key, None)
         print(f"Audiobook generator terminated manually (pid={pid})")
     else:
         print(f"No active audiobook generator found for session {session_key[:12]}")
@@ -2792,6 +2884,44 @@ def host_ui(config):
                     chatterbox_break_duration, chatterbox_max_chars, chatterbox_output_format
                 ],
                 outputs=None)
+        with gr.Accordion("📦 Descargar y limpiar audiolibros generados", open=True):
+            gr.Markdown(
+                "Indica una carpeta dentro de `audiobook_output`. Genera el ZIP, "
+                "descárgalo y verifícalo; solo entonces podrás borrar la carpeta original."
+            )
+            managed_output_dir = gr.Textbox(
+                label="Carpeta del audiolibro generado",
+                value=default_output_dir,
+                interactive=True,
+                info="Ejemplo: audiobook_output/2026-09-03_03-00-46",
+            )
+            with gr.Row():
+                make_zip_button = gr.Button("📦 Preparar ZIP", variant="primary")
+                zip_download = gr.File(label="ZIP para descargar", interactive=False)
+            zip_status = gr.Markdown()
+            zip_downloaded = gr.Checkbox(
+                label="He descargado y verificado el ZIP",
+                value=False,
+                info="Actívalo solo después de guardar el archivo en tu equipo.",
+            )
+            delete_confirmation = gr.Textbox(
+                label="Confirmación de borrado",
+                placeholder="Escribe ELIMINAR",
+                type="password",
+                interactive=True,
+            )
+            delete_output_button = gr.Button("🗑️ Eliminar carpeta original", variant="stop")
+            delete_status = gr.Markdown()
+            make_zip_button.click(
+                fn=prepare_audiobook_zip,
+                inputs=[managed_output_dir],
+                outputs=[zip_download, zip_status],
+            )
+            delete_output_button.click(
+                fn=delete_audiobook_output,
+                inputs=[managed_output_dir, delete_confirmation, zip_downloaded],
+                outputs=[delete_status],
+            )
         with gr.Row():
             global webui_log_file
             webui_log_file = generate_unique_log_path("EtA_WebUI")
