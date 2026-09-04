@@ -2337,7 +2337,7 @@ def host_ui(config):
                     )
                     chatterbox_device = gr.Dropdown(
                         ["cuda", "cpu"], value="cuda", label="Dispositivo", interactive=True,
-                        info="CUDA usa la RTX 3050 Ti; con 4 GB no conviene ejecutar dos modelos locales a la vez."
+                        info="CUDA intenta usar la RTX 3050 Ti; si no hay VRAM suficiente, cambia automáticamente a CPU."
                     )
                     chatterbox_output_format = gr.Dropdown(
                         ["mp3", "wav"], value="mp3", label="Formato", interactive=True

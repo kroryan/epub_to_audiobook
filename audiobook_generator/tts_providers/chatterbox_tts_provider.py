@@ -84,6 +84,12 @@ class ChatterboxTTSProvider(BaseTTSProvider):
         )
         ready = self._worker.stdout.readline() if self._worker.stdout else ""
         if not ready:
+            return_code = self._worker.poll()
+            if return_code is not None:
+                raise RuntimeError(
+                    "Chatterbox terminó durante el arranque "
+                    f"(código {return_code}); revisa el log para ver el motivo"
+                )
             raise RuntimeError("Chatterbox no devolvió estado de arranque")
         message = json.loads(ready)
         if not message.get("ready"):

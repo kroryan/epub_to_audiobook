@@ -8,6 +8,7 @@ application can keep Edge, ElevenLabs, Coqui and Chatterbox isolated.
 from __future__ import annotations
 
 import json
+import gc
 import logging
 import os
 import re
@@ -23,6 +24,34 @@ from chatterbox.mtl_tts import ChatterboxMultilingualTTS
 
 logging.basicConfig(level=logging.INFO, format="[Chatterbox] %(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("chatterbox_worker")
+
+
+def _is_cuda_oom(error: BaseException) -> bool:
+    return isinstance(error, torch.cuda.OutOfMemoryError) or (
+        "out of memory" in str(error).lower() and "cuda" in str(error).lower()
+    )
+
+
+def _load_model(model_name: str, device: str):
+    """Load the requested model, falling back to CPU when CUDA cannot fit it."""
+    try:
+        return ChatterboxMultilingualTTS.from_pretrained(
+            device=device, t3_model=model_name
+        ), device
+    except Exception as exc:
+        if device != "cuda" or not _is_cuda_oom(exc):
+            raise
+        logger.warning(
+            "CUDA no tiene memoria suficiente para cargar Chatterbox; "
+            "cambiando a CPU (%s)",
+            exc,
+        )
+        gc.collect()
+        torch.cuda.empty_cache()
+        return (
+            ChatterboxMultilingualTTS.from_pretrained(device="cpu", t3_model=model_name),
+            "cpu",
+        )
 
 
 def split_book_text(text: str, max_chars: int) -> list[str]:
@@ -106,7 +135,7 @@ def main() -> int:
         logger.warning("CUDA no está disponible; usando CPU")
         device = "cpu"
     logger.info("Cargando Chatterbox Multilingual %s en %s", model_name.upper(), device)
-    model = ChatterboxMultilingualTTS.from_pretrained(device=device, t3_model=model_name)
+    model, device = _load_model(model_name, device)
     logger.info("Modelo cargado; sample rate=%s", model.sr)
     sys.stdout.write(json.dumps({"ready": True, "device": device}) + "\n")
     sys.stdout.flush()
@@ -118,7 +147,20 @@ def main() -> int:
             request = json.loads(line)
             if request.get("command") == "stop":
                 break
-            generate_request(model, request)
+            try:
+                generate_request(model, request)
+            except Exception as exc:
+                if device != "cuda" or not _is_cuda_oom(exc):
+                    raise
+                logger.warning(
+                    "CUDA se quedó sin memoria durante la síntesis; "
+                    "cambiando Chatterbox a CPU y reintentando el fragmento"
+                )
+                del model
+                gc.collect()
+                torch.cuda.empty_cache()
+                model, device = _load_model(model_name, "cpu")
+                generate_request(model, request)
             response = {"ok": True}
         except Exception as exc:  # protocol must always return one response
             logger.exception("Error generando audio")
