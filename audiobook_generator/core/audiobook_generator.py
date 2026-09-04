@@ -6,6 +6,7 @@ from audiobook_generator.book_parsers.base_book_parser import get_book_parser
 from audiobook_generator.config.general_config import GeneralConfig
 from audiobook_generator.core.audio_tags import AudioTags
 from audiobook_generator.tts_providers.base_tts_provider import get_tts_provider
+from audiobook_generator.utils.audiobook_export import export_final_m4a
 from audiobook_generator.utils.log_handler import setup_logging
 
 logger = logging.getLogger(__name__)
@@ -184,7 +185,34 @@ class AudiobookGenerator:
                     logger.warning(f"  - Chapter {idx}: {title}")
                 logger.info(f"Conversion completed with {len(failed_chapters)} failed chapters. Check your output directory: {self.config.output_folder} and log file: {self.config.log_file} for more details.")
             else:
-                logger.info(f"All chapters converted successfully. Check your output directory: {self.config.output_folder}")
+                if self.config.preview:
+                    logger.info(f"Preview completed. Check your output directory: {self.config.output_folder}")
+                else:
+                    chapter_extension = tts_provider.get_output_file_extension()
+                    chapter_audio_files = [
+                        os.path.join(
+                            self.config.output_folder,
+                            f"{idx:04d}_{title}.{chapter_extension}",
+                        )
+                        for idx, (title, _text) in enumerate(
+                            chapters_to_process, start=self.config.chapter_start
+                        )
+                    ]
+                    final_file = export_final_m4a(
+                        chapter_audio_files,
+                        self.config.output_folder,
+                        title=book_parser.get_book_title(),
+                        author=book_parser.get_book_author(),
+                    )
+                    logger.info(
+                        "🎧 Final audiobook exported as one M4A file: %s",
+                        final_file,
+                    )
+                    logger.info(
+                        "All chapters converted successfully. Source chapters kept in %s; final result is in %s",
+                        self.config.output_folder,
+                        final_file.parent,
+                    )
 
         except KeyboardInterrupt:
             logger.info("Audiobook generation process interrupted by user (Ctrl+C).")

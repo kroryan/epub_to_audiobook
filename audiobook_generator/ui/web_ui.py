@@ -1533,14 +1533,17 @@ def prepare_audiobook_zip(output_dir):
         if not folder.exists() or not folder.is_dir():
             return None, f"❌ No existe la carpeta de salida: `{folder}`"
 
+        final_folder = folder / "final"
         files = [
-            path for path in folder.rglob("*")
-            if path.is_file()
-            and not any(part.startswith(".") for part in path.relative_to(folder).parts)
-            and path.suffix.lower() != ".zip"
+            path for path in final_folder.glob("*.m4a")
+            if path.is_file() and not path.name.startswith(".")
         ]
-        if not files:
-            return None, "❌ La carpeta no contiene archivos para comprimir."
+        if len(files) != 1:
+            return (
+                None,
+                "❌ Aún no existe un audiolibro final único. Espera a que termine "
+                "la conversión completa y vuelve a intentarlo.",
+            )
 
         archive = Path(tempfile.gettempdir()) / (
             f"epub_to_audiobook_{folder.name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.zip"
@@ -1549,7 +1552,9 @@ def prepare_audiobook_zip(output_dir):
             archive, mode="w", compression=zipfile.ZIP_DEFLATED, compresslevel=6
         ) as zip_file:
             for path in sorted(files):
-                zip_file.write(path, path.relative_to(folder))
+                # Put the one final M4A at the ZIP root; chapter source files
+                # remain outside the archive for recovery/debugging.
+                zip_file.write(path, path.name)
 
         size_mb = archive.stat().st_size / (1024 * 1024)
         return (
@@ -1561,9 +1566,27 @@ def prepare_audiobook_zip(output_dir):
         return None, f"❌ No se pudo crear el ZIP: {exc}"
 
 
-def delete_audiobook_output(output_dir, confirmation, downloaded_zip):
+def _sync_delete_context(output_dir, confirmation, downloaded_zip):
+    """Keep the three deletion fields in one state value for old Gradio clients."""
+    return {
+        "output_dir": output_dir or "",
+        "confirmation": confirmation or "",
+        "downloaded_zip": bool(downloaded_zip),
+    }
+
+
+def delete_audiobook_output(delete_request, confirmation=None, downloaded_zip=None):
     """Delete one generated folder after explicit download confirmation."""
     try:
+        # The button uses one state input so a browser tab with the previous
+        # interface cannot crash Gradio by submitting only one value.
+        if confirmation is None and downloaded_zip is None:
+            request = delete_request if isinstance(delete_request, dict) else {}
+            output_dir = request.get("output_dir", "")
+            confirmation = request.get("confirmation", "")
+            downloaded_zip = request.get("downloaded_zip", False)
+        else:
+            output_dir = delete_request
         folder = _resolve_managed_output_dir(output_dir)
         if not downloaded_zip:
             return "❌ Marca primero `He descargado/verificado el ZIP`."
@@ -2912,6 +2935,19 @@ def host_ui(config):
             )
             delete_output_button = gr.Button("🗑️ Eliminar carpeta original", variant="stop")
             delete_status = gr.Markdown()
+            delete_context = gr.State(
+                _sync_delete_context(default_output_dir, "", False)
+            )
+            for delete_input in (
+                managed_output_dir,
+                delete_confirmation,
+                zip_downloaded,
+            ):
+                delete_input.change(
+                    fn=_sync_delete_context,
+                    inputs=[managed_output_dir, delete_confirmation, zip_downloaded],
+                    outputs=[delete_context],
+                )
             make_zip_button.click(
                 fn=prepare_audiobook_zip,
                 inputs=[managed_output_dir],
@@ -2919,7 +2955,7 @@ def host_ui(config):
             )
             delete_output_button.click(
                 fn=delete_audiobook_output,
-                inputs=[managed_output_dir, delete_confirmation, zip_downloaded],
+                inputs=[delete_context],
                 outputs=[delete_status],
             )
         with gr.Row():
